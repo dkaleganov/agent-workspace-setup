@@ -56,6 +56,8 @@ Copy the same folder into `~/.agents/skills/`. Codex loads skills from there, an
 
 The script needs Python 3.9 or later and nothing else.
 
+New to this? [HOW-TO.md](HOW-TO.md) has the steps for each tool in plain words, and what to say day to day.
+
 ## First run
 
 Start a session and say:
@@ -107,9 +109,9 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 
 | What | How | On |
 |---|---|---|
-| Claude Code | Automated runs of three scenarios: setup, a next-day restart, and a safety test | macOS, Linux, Windows |
+| Claude Code | Automated runs of three scenarios on Sonnet: setup, a next-day restart, and a safety test | macOS, Linux, Windows |
 | Codex | One hands-on run | macOS |
-| Cowork | One hands-on run | macOS |
+| Cowork | One hands-on run on Sonnet | macOS |
 | The script alone | 79 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
 Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows.

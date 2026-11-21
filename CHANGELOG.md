@@ -1,5 +1,9 @@
 # Changelog
 
+## After 0.1.0
+
+- Added `HOW-TO.md`: the steps for each tool in plain words, and what to say day to day. The skill itself is unchanged.
+
 ## 0.1.0
 
 First public release.
