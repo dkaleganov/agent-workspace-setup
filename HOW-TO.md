@@ -4,6 +4,15 @@ A short guide for people who don't write code. Pick your tool and do its three s
 
 The idea is the same in every tool: install the skill once and ask for a workspace once. From then on, each session starts by reading the files and ends by updating them.
 
+## What each tool needs
+
+| Tool | Needs on your computer |
+|---|---|
+| Cowork | Nothing. The skill's script runs inside Cowork |
+| Claude Code, Codex | Python 3.9 or later |
+
+To check for Python, open Terminal and type `python3 --version`. On a Mac without it, that command offers to install Apple's developer tools, which include Python. On Windows, install Python from python.org or the Microsoft Store, and type `python` wherever this guide says `python3`.
+
 ## Cowork (Claude desktop app)
 
 **1. Install**
@@ -28,7 +37,22 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
 
 **1. Install**
 
-Download the ZIP from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases) and unzip it. Move the folder `agent-workspace-setup` into the `.claude/skills` folder in your home folder. On a Mac that is `~/.claude/skills/`. On Windows it is `%USERPROFILE%\.claude\skills\`.
+1. Download the ZIP from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases) and unzip it in your Downloads folder. You get a folder named `agent-workspace-setup`.
+2. Open Terminal and paste this line. The skill copies itself into Claude Code's skills folder and tells you where it went:
+
+   ```
+   python3 ~/Downloads/agent-workspace-setup/scripts/workspace.py install --tool claude
+   ```
+
+   On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
+
+   ```
+   python "$HOME\Downloads\agent-workspace-setup-0.1.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   ```
+
+3. Start a new Claude Code session.
+
+Prefer to do it by hand? Move the folder into `~/.claude/skills/`. That folder is hidden on a Mac: in Finder, press Cmd+Shift+G and paste the path.
 
 **2. Set up your workspace**
 
@@ -42,7 +66,22 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
 
 **1. Install**
 
-Download and unzip the same ZIP. Move the folder `agent-workspace-setup` into `~/.agents/skills/`. On Windows that is `%USERPROFILE%\.agents\skills\`.
+1. Download and unzip the same ZIP in your Downloads folder.
+2. Open Terminal and paste this line. The skill copies itself into the skills folder Codex reads, and makes that folder if it isn't there:
+
+   ```
+   python3 ~/Downloads/agent-workspace-setup/scripts/workspace.py install --tool codex
+   ```
+
+   On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
+
+   ```
+   python "$HOME\Downloads\agent-workspace-setup-0.1.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   ```
+
+3. Restart Codex.
+
+Add `--dry-run` to the end of the line to see where the copy would go before anything is written.
 
 **2. Set up your workspace**
 
@@ -100,3 +139,4 @@ The project names here are made up.
 - **Ask for an undo** right after a rename, a move or an archive.
 - **Deleting is your job.** The skill never deletes anything. If a folder should go, you delete it yourself.
 - **A folder you call private stays closed.** If an agent opens one anyway, tell it to stop, and name the folder as private again.
+- **Report it.** [Open an issue](https://github.com/dkaleganov/agent-workspace-setup/issues) and say which tool you use and what you saw.

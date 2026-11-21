@@ -983,6 +983,20 @@ class PackageTests(unittest.TestCase):
         self.assertEqual((SKILL_DIR / "LICENSE.txt").read_text(encoding="utf-8"), repo_copy)
         self.assertTrue(self.frontmatter()["license"].startswith("MIT"))
 
+    def test_the_script_stays_offline(self):
+        """The public README promises this: no network code, and no other program is started."""
+        tree = ast.parse(SCRIPT.read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        banned = {"socket", "ssl", "http", "http.client", "urllib.request", "ftplib", "smtplib", "telnetlib",
+                  "xmlrpc", "xmlrpc.client", "requests", "subprocess", "multiprocessing", "webbrowser"}
+        self.assertEqual(sorted(imported & banned), [])
+        self.assertNotIn("os.system(", SCRIPT.read_text(encoding="utf-8"))
+
     def test_skill_md_stays_short(self):
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         self.assertLess(len(text.encode("utf-8")), 12000)

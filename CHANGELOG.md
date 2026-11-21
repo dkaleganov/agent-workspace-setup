@@ -3,6 +3,8 @@
 ## After 0.1.0
 
 - Added `HOW-TO.md`: the steps for each tool in plain words, and what to say day to day. The skill itself is unchanged.
+- The how-to now installs the skill for Claude Code and Codex with one pasted line, and says which tools need Python.
+- The README says the script works offline, and where to report a problem. A test keeps the script free of network code.
 
 ## 0.1.0
 

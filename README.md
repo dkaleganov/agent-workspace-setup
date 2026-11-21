@@ -54,9 +54,9 @@ Copy the folder `skills/agent-workspace-setup` into `~/.claude/skills/`.
 
 Copy the same folder into `~/.agents/skills/`. Codex loads skills from there, and so do Cursor, GitHub Copilot, Amp and Gemini CLI. Of that group, only Codex has been tested.
 
-The script needs Python 3.9 or later and nothing else.
+Cowork needs nothing installed on your computer. Claude Code and Codex need Python 3.9 or later, and nothing else.
 
-New to this? [HOW-TO.md](HOW-TO.md) has the steps for each tool in plain words, and what to say day to day.
+New to this? [HOW-TO.md](HOW-TO.md) has the steps for each tool in plain words, a one-line install for Claude Code and Codex, and what to say day to day.
 
 ## First run
 
@@ -82,6 +82,7 @@ The next day, open a session in a project folder and say "Continue this project.
 - **Every move can be undone.** A rename, a move or an archive is logged before it happens.
 - **Your documents stay where they are.** The workspace records where they live, and agents read them by path.
 - **Private folders stay closed.** You name them once. The rules tell every agent to leave them shut, and the script never opens them.
+- **The script works offline.** It reads and writes files on your computer and sends nothing anywhere. What your AI tool sends to its own service stays as it was.
 
 ## How the numbering works
 
@@ -112,11 +113,15 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | Claude Code | Automated runs of three scenarios on Sonnet: setup, a next-day restart, and a safety test | macOS, Linux, Windows |
 | Codex | One hands-on run | macOS |
 | Cowork | One hands-on run on Sonnet | macOS |
-| The script alone | 79 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| The script alone | 80 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
 Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows.
 
 This is version 0.1.0. Try it on a test folder first.
+
+## Questions and problems
+
+[Open an issue](https://github.com/dkaleganov/agent-workspace-setup/issues). Say which tool you use and what you saw.
 
 ## For developers
 
