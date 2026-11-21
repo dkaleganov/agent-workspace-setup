@@ -1,0 +1,15 @@
+{
+  "location": "/Users/ana/Drive",
+  "home_name": "AI-Agents",
+  "home_number": 90,
+  "owner": "Ana Lopez",
+  "private": [],
+  "work": [
+    {
+      "title": "Duplex renovation",
+      "kind": "project",
+      "purpose": "Renovate the duplex on Elm St.",
+      "documents": ["/Users/ana/Drive/Duplex papers"]
+    }
+  ]
+}
