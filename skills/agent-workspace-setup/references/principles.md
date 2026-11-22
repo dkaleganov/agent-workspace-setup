@@ -13,7 +13,7 @@ A chat forgets. A folder doesn't. Keep the memory of your work in plain folders 
 3. **The script gives every number.** You never pick one, and a number is never used twice.
 4. **Documents stay where they are.** Your contracts, statements and photos are read where they live. The skill writes only inside the AI home.
 5. **Agents draft, you decide.** Nothing is sent, shared, moved or deleted without your OK for that action.
-6. **Keep it light.** Three small files per piece of work. Start with one project and add the rest when you need them.
+6. **Keep it light.** Six small files per piece of work, the same in every folder. Start with one project and add the rest when you need them.
 
 ## The numbered home
 
@@ -69,6 +69,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | `CLAUDE.md` | the AI home | One line that makes Claude load `AGENTS.md` |
 | `README.md` | the AI home | The map. The skill keeps its tables current; your own notes go outside them |
 | `_workspace/` | the AI home | The skill's records: settings, the number ledger, the moves log. Not for editing by hand |
+| `_workspace/friction.md` | the AI home | One line from an agent each time a command of the skill tripped it. Yours to read, pass on and empty |
 | `AGENTS.md` | each group | Three lines that send an agent to the rules and the map |
 | `CLAUDE.md` | each group and work folder | One line that makes Claude load the `AGENTS.md` beside it |
 | `README.md` | each work folder | What the work is and how the folder is organized. It changes only when the goal changes |
@@ -107,6 +108,13 @@ Only your decisions go here. When one changes, add a new entry and mark the old 
 
 **Agent notes** (`AGENT_SYNC.md`): starts `# Agent sync: <name>`. Notes are added at the bottom as `### <timestamp> · <from> → <to> · open | FYI`. Nobody edits another agent's note. A reply is a new note that starts `Re: <timestamp>`.
 
+## Facts and where they came from
+
+- **A fact carries its source.** When an agent writes down a number, a date, a price, a name or a promise that didn't come from its own work in that session, it adds where it came from and when, in brackets: `(the supplier's quote, 2026-01-12)`.
+- **Two sources that disagree are both written down,** and the conflict goes under Don't forget until you settle it.
+- **What couldn't be checked is marked `Unconfirmed`.** The check counts those lines, and a brief lists them.
+- **A brief says what it didn't cover:** private folders, documents that aren't on this computer, hand-offs it didn't read, and everything outside the workspace, such as mail and chat.
+
 ## Private folders
 
 Tell the skill which folders are private. The script never lists or opens them, and the rules tell every agent the same.
@@ -115,7 +123,7 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 
 ## A piece of work, start to finish
 
-1. **Start:** the skill creates the numbered folder with its three small files.
+1. **Start:** the skill creates the numbered folder with its six standard files.
 2. **Work:** drafts as `_v1`, `_v2`. The hand-off is updated after each finished task.
 3. **Confirm:** you approve a version. "Main files" says where the master lives.
 4. **Share:** only with your OK for that action.
@@ -130,6 +138,6 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 ## What the skill never does
 
 - It deletes nothing. If something should go, it tells you and you delete it.
-- It never overwrites a file. It creates new ones, keeps its own records, and refreshes the tables it owns in the map.
+- It never overwrites a file. It creates new ones, keeps its own records, and refreshes the tables it owns in the map. After you update the skill and approve it, it adds new rules to the end of the home's `AGENTS.md`.
 - It never touches a folder outside the AI home.
 - It never sends, posts, shares or pays.

@@ -20,11 +20,11 @@ For the agent. `SKILL.md` has the short checklists; this file has the detail beh
 
 For each item in `work`: `kind` is `project` (finishes), `area` (ongoing) or `data` (a library); the default is `project`. `status` starts with Active, Paused, Ongoing or Closed. `documents` lists folders the work reads; they stay where they are.
 
-**What setup does:** creates the home if it's new, its records, the five group folders, the home's `AGENTS.md`, `CLAUDE.md` and `README.md`, and each work folder with `AGENTS.md`, `CLAUDE.md` and `HANDOFF.md`. Then it refreshes the map and runs the check.
+**What setup does:** creates the home if it's new, its records, the five group folders, the home's `AGENTS.md`, `CLAUDE.md` and `README.md`, and each work folder with its six standard files. Then it refreshes the map and runs the check.
 
 **What setup never does:** overwrite a file, or touch a folder outside the home. Running it again adds only what is missing and keeps every edit the owner made.
 
-**After setup:** open the work folder's hand-off with the owner. Write the goal under Current state and the first task under Next actions. That is the point of the whole exercise.
+**After setup:** ask the owner for the goal and the first task. Write the goal into the work folder's `README.md` and the first task under Next actions in its hand-off. That is the point of the whole exercise.
 
 ## New work folder
 
@@ -41,7 +41,7 @@ In this version, bringing in means pointing at folders. Nothing outside the home
 3. For each folder the owner wants an agent to pick up, add a work folder with `--documents "<that folder>"`.
 4. Write each hand-off from file names and dates. Mark every guess "Unconfirmed (ask the owner)". Record a decision only when the owner made it.
 
-**A folder that already sits inside the home** (the owner turned an existing AI folder into the home, or dropped a folder into it): `adopt "<folder>" --kind project|area|data [--title "<Title>"]`. The folder moves into the right group under the next number, and every file in it stays as it is. It gets `AGENTS.md`, `CLAUDE.md` and `HANDOFF.md` only where those are missing. If it already had a hand-off, the command names a `**Key:**` line to add to it; add that line yourself with the owner's OK. `undo` puts the folder back, and its number is retired.
+**A folder that already sits inside the home** (the owner turned an existing AI folder into the home, or dropped a folder into it): `adopt "<folder>" --kind project|area|data [--title "<Title>"]`. The folder moves into the right group under the next number, and every file in it stays as it is. It gets each of the six standard files only where that file is missing. If it already had a hand-off, the command names a `**Key:**` line to add to it; add that line yourself with the owner's OK. `undo` puts the folder back, and its number is retired.
 
 ## Upkeep: moves
 
@@ -91,6 +91,8 @@ After a move, run `check`. A link that the move broke is listed with its new tar
 | HND005 | info | Files changed after the hand-off was last updated | Read the hand-off and bring it up to date |
 | HND006 | info | Active, and the hand-off is older than the limit (30 days) | Ask whether the status or next action changed |
 | HND008 | info | The hand-off is over 20 KB | Copy older log lines to a file beside it, link it, then shorten the log with the owner's OK |
+| HND009 | info | Active or ongoing work whose Next actions names nothing to do | Ask the owner what comes next, or whether the work is now Paused or Closed |
+| HND010 | info | Hand-off lines still marked Unconfirmed | Ask the owner about each one, then replace the mark with the answer and its source |
 | MAP001 | warn | A work folder is missing from the map | `map` |
 | MAP002 | warn | A map table was edited by hand, or its markers are unclear | Fix it with the owner, then `map` |
 | MAP003 | info | A name, status or purpose changed since the map was written | `map` |
@@ -100,8 +102,38 @@ After a move, run `check`. A link that the move broke is listed with its new tar
 | SYNC001 | warn | A sync conflict copy of a managed file | Compare both with the owner. Don't pick by date alone |
 | INB001 | info | Items waiting in the Inbox | Go through them with the owner |
 | MOV001 | warn | A move that didn't finish | The next command that changes the workspace settles it |
+| VER001 | info | The workspace was set up with an older version of the skill | `upgrade --dry-run`, then for real after the OK |
+| VER002 | info | This copy of the skill is older than the one that last upgraded the workspace | The owner updates this copy. Leave the workspace's newer rules alone |
+| FRC001 | info | Friction notes from agents are waiting in `_workspace/friction.md` | Show them to the owner. They can pass them on, then empty the file |
 
 **Quieting a finding:** with the owner's OK, add `"RULE:path-pattern"` to `suppress` in `_workspace/settings.json`, such as `"HND005:91_Projects/91.02_*"`.
+
+## Upkeep: tidy up
+
+For when hand-offs have drifted. The owner says "tidy up my workspace", or a check lists HND005, HND006, HND008, HND009 or HND010. The script edits no hand-off, so this is done by hand, one work folder at a time.
+
+1. Run `check`. Tell the owner which work folders it names, and ask which to tidy. Finish one before starting the next.
+2. Read that folder's `README.md`, hand-off and `DECISIONS.md`. Open other files only when the log points to them.
+3. Draft the new hand-off and show the before and after. Write nothing yet.
+   - **Current state:** rewritten from the Session log and the files' dates. What is done, in progress and blocked, each with its date. Keep everything that is still true.
+   - **Next actions:** finished ones removed, the rest renumbered. If nothing comes next, ask whether the status is now Paused or Closed.
+   - **Don't forget:** keep every item that isn't resolved.
+   - **Session log:** past about 30 lines, the older ones move to `HANDOFF-log.md` beside the hand-off, in the same order, and How to continue links that file. Copy them first, check the copy, then shorten the log.
+   - Mark anything you can't confirm from the files `Unconfirmed`. Don't guess.
+4. After the owner's OK for that folder, write it. Set Last updated, and add one Session log line that says the hand-off was tidied.
+5. Leave `DECISIONS.md`, other agents' notes in `AGENT_SYNC.md` and the Key line alone. When all are done, run `map`, then `check`.
+
+**On a schedule:** the skill runs nothing by itself. An owner whose tool has scheduled tasks can schedule the words "tidy up my workspace and show me what you'd change". It still waits for their OK.
+
+## Upkeep: after the skill was updated
+
+A workspace remembers which version of the skill set it up. When the copy of the skill is newer, `check` says so (VER001).
+
+1. Run `upgrade --dry-run`. It lists what's new, and shows the exact section it would add to the end of the home's `AGENTS.md`: the rules that workspaces set up today already have.
+2. Tell the owner what's new in plain words, and show them that text.
+3. After the OK, run `upgrade`. It adds the section, records the new version, and changes nothing else. Then tell the owner to restart tools that read the rules only when they start.
+
+A rule the home's `AGENTS.md` already has is not added twice. To take a rule out again, the owner deletes that section by hand.
 
 ## Upkeep: reconcile
 
@@ -120,10 +152,11 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 
 ## Brief me
 
-1. `check --brief` gives every work folder's status, last update and next action, and a "Needs attention" list.
+1. `check --brief` gives every work folder's status, last update and next action, a "Needs attention" list, and a "Not covered by this brief" list.
 2. Read the hand-off of every Active or Ongoing work folder, and of each folder under Needs attention: Current state, Next actions, Don't forget.
 3. Brief in this order, one line each: due today or tomorrow, or overdue; blocked, or waiting on the owner; hand-offs that look out of date; then at most three things to focus on.
-4. Then wait. Don't edit any hand-off, and don't start work the owner hasn't picked.
+4. End with what the brief didn't cover. Pass on the script's "Not covered" list in your own words: private folders, document folders that aren't on this computer, hand-offs you didn't read, lines still marked Unconfirmed, and everything outside the workspace. Add anything else you couldn't open. A brief that leaves this out reads as the whole picture, and it isn't.
+5. Then wait. Don't edit any hand-off, and don't start work the owner hasn't picked.
 
 ## Without the script
 
@@ -132,8 +165,8 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 1. Create the home folder, `_workspace/`, and the five group folders, numbered from the home's ten: +0 Inbox, +1 Projects, +2 Areas, +5 Data, +9 Archive.
 2. Write `_workspace/settings.json`:
    ```json
-   {"version": 1, "owner": "<name>", "home_number": 90, "separator": "_", "handoff_file": "HANDOFF.md",
-    "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
+   {"version": 1, "skill_version": "0.2.0", "owner": "<name>", "home_number": 90, "separator": "_",
+    "handoff_file": "HANDOFF.md", "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
    ```
 3. For each file, copy the matching template from `assets/templates`, replace every `{{PLACEHOLDER}}`, and show it before writing it.
 4. Number the work folders from `.01` in the order the owner listed them. For each one, make up a key of six characters from `0-9a-f`, put it on the hand-off's Key line, and add one line to `_workspace/ledger.jsonl`:

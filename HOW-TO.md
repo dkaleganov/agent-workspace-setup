@@ -17,7 +17,7 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.1.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.2.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
@@ -47,7 +47,7 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.1.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.2.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
@@ -76,7 +76,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.1.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.2.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -112,7 +112,7 @@ Not tested in this version. The skill is built to work like this:
 
 | You say | What happens |
 |---|---|
-| "Brief me." | One line per piece of work: what is due, what is waiting on you, what is out of date |
+| "Brief me." | One line per piece of work: what is due, what is waiting on you, what is out of date. It ends with what it didn't cover |
 | "Add a project: the garage sale." | A new numbered folder with the six standard files, after a preview |
 | "Add an area: bookkeeping." | The same, for work that never finishes |
 | "Record that decision." | Your decision goes into `DECISIONS.md`, with the date and the reason |
@@ -121,6 +121,8 @@ Not tested in this version. The skill is built to work like this:
 | "Archive this project." | It moves to the archive and keeps its number |
 | "Undo that." | The last rename, move or archive is reversed |
 | "Check my workspace." | A read-only check, with a fix for each finding |
+| "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. You see the before and after first |
+| "Upgrade my workspace." | After you update the skill: what's new, and the new rules for your workspace, after a preview |
 | "What is this file for?" | A plain answer |
 
 The project names here are made up.
@@ -132,6 +134,13 @@ The project names here are made up.
 - **Say your decisions out loud.** "We're going with the second contractor. Record that."
 - **Let the skill give out numbers.** Never number a folder by hand.
 - **Keep documents where they are.** Contracts, statements and photos stay in your own folders. Tell the agent where they live, and it reads them from there.
+- **Ask where a number came from.** Agents write a fact down with its source and date. What they couldn't check is marked `Unconfirmed`, and a brief lists those lines.
+
+## When you update the skill
+
+1. Install the newer version the same way you installed the first. For Claude Code and Codex, add `--update` to the install line. The old copy is kept in a backup folder.
+2. In a new session, say: "Upgrade my workspace."
+3. The agent tells you what's new and shows the exact text it would add to the end of your `AGENTS.md`. Nothing changes before your OK. No project, hand-off or number is touched.
 
 ## If something looks wrong
 
@@ -140,3 +149,4 @@ The project names here are made up.
 - **Deleting is your job.** The skill never deletes anything. If a folder should go, you delete it yourself.
 - **A folder you call private stays closed.** If an agent opens one anyway, tell it to stop, and name the folder as private again.
 - **Report it.** [Open an issue](https://github.com/dkaleganov/agent-workspace-setup/issues) and say which tool you use and what you saw.
+- **Send the friction notes.** When a command trips an agent, it adds one line to `_workspace/friction.md` in your AI home. The lines hold the command and what happened, with no file contents. Read them, paste them into an issue, then empty the file.

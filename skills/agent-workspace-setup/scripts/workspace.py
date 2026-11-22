@@ -28,17 +28,40 @@ import shutil
 import sys
 import tempfile
 import time
+import traceback
 import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
 SETTINGS_FILE = "settings.json"
 LEDGER_FILE = "ledger.jsonl"
 MOVES_FILE = "moves.jsonl"
+FRICTION_FILE = "friction.md"
+# A workspace whose settings name no version was set up by the first release.
+FIRST_VERSION = "0.1.0"
+
+# What each version changed for a workspace that already exists, oldest first. "rules" are the bold titles
+# of rules in the home-AGENTS.md template that a workspace set up before that version doesn't have yet.
+UPGRADES = [
+    {
+        "version": "0.2.0",
+        "news": [
+            "A brief now ends with what it didn't cover: private folders, documents that aren't on this computer, "
+            "hand-offs it didn't read, and everything outside the workspace.",
+            "The check names work with no next action, and hand-off lines still marked Unconfirmed.",
+            "A new request, \"tidy up my workspace\": it brings a hand-off up to date from its own log, "
+            "one work folder at a time, and shows the change before making it.",
+            "When a command trips an agent, it adds one line to `%s/%s`, so the owner can pass the notes on."
+            % (RECORDS, FRICTION_FILE),
+            "A new rule for agents: say where a fact came from.",
+        ],
+        "rules": ["Say where a fact came from."],
+    },
+]
 
 # Group numbers are offsets from the home's ten: a home numbered 90 gets 90, 91, 92, 95, 99.
 GROUPS = {
@@ -180,6 +203,11 @@ def bullets(items):
     return "\n".join("- " + item for item in items)
 
 
+def version_tuple(text):
+    parts = re.findall(r"\d+", str(text or ""))[:3]
+    return tuple(int(part) for part in parts) if len(parts) == 3 else (0, 1, 0)
+
+
 # ----------------------------------------------------------------------------
 # The home, its settings, and what is on disk
 # ----------------------------------------------------------------------------
@@ -243,6 +271,10 @@ class Home:
     def owner_first(self):
         owner = (self.settings.get("owner") or "").strip()
         return owner.split()[0] if owner else "the owner"
+
+    def skill_version(self):
+        """The version of the skill that set this workspace up, or last upgraded it."""
+        return str(self.settings.get("skill_version") or FIRST_VERSION)
 
     def is_private(self, rel_path):
         rel_path = rel_path.strip("/").lower()
@@ -639,10 +671,16 @@ def parse_handoff(text):
     info["headings"] = [m.group(1).strip() for m in re.finditer(r"^##[ \t]+(.+?)[ \t]*$", text, re.M)]
     section = re.search(r"^##[ \t]+Next actions[ \t]*$(.*?)(?=^##[ \t]|\Z)", text, re.M | re.S)
     if section:
-        first = re.search(r"^[ \t]*1[.)][ \t]+(.+)$", section.group(1), re.M)
+        first = (re.search(r"^[ \t]*1[.)][ \t]+(.+)$", section.group(1), re.M)
+                 or re.search(r"^[ \t]*[-*][ \t]+(.+)$", section.group(1), re.M))
         if first:
             info["next_action"] = first.group(1).strip()
     return info
+
+
+def no_next_action(text):
+    """True when a hand-off's first next action is missing, or only says there is none."""
+    return not re.sub(r"(?i)\b(none|nothing|n/?a|tbd|yet)\b|[\W_]", "", text or "")
 
 
 def handoff_info(home, item):
@@ -937,7 +975,7 @@ def plan_setup(answers):
         if not owner:
             problems.append("`owner` is missing: the owner's name.")
         settings = dict(DEFAULT_SETTINGS)
-        settings.update({"owner": owner, "home_number": number})
+        settings.update({"owner": owner, "home_number": number, "skill_version": __version__})
         for key in ("private", "documents", "tools"):
             value = answers.get(key, [])
             if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -1385,6 +1423,8 @@ RULES = {
     "HND005": ("info", "Files changed after the hand-off"),
     "HND006": ("info", "An active hand-off that is old"),
     "HND008": ("info", "A hand-off longer than some tools read"),
+    "HND009": ("info", "Active or ongoing work with no next action"),
+    "HND010": ("info", "Hand-off lines still marked Unconfirmed"),
     "MAP001": ("warn", "A work folder is missing from the map"),
     "MAP002": ("warn", "The map table was edited by hand, or its markers are unclear"),
     "MAP003": ("info", "The map is out of date"),
@@ -1394,6 +1434,9 @@ RULES = {
     "SYNC001": ("warn", "A sync conflict copy"),
     "INB001": ("info", "Items waiting in the Inbox"),
     "MOV001": ("warn", "A move that didn't finish"),
+    "VER001": ("info", "The workspace was set up with an older version of the skill"),
+    "VER002": ("info", "This copy of the skill is older than the workspace"),
+    "FRC001": ("info", "Friction notes are waiting"),
 }
 
 
@@ -1539,6 +1582,14 @@ def run_check(home):
             add("HND008", rel, "The hand-off is over %d KB. Some tools stop reading long files." % (HANDOFF_LIMIT // 1000),
                 "Copy older Session log lines to a file beside it, link that file from How to continue, "
                 "then shorten the log with the owner's OK.")
+        if not item["archived"]:
+            if status.lower().startswith(("active", "ongoing")) and no_next_action(info["next_action"]):
+                add("HND009", rel, "%s, and Next actions names nothing to do." % status.split()[0],
+                    "Ask the owner what comes next, or whether this work is now Paused or Closed.")
+            unsure = len(re.findall(r"(?im)^.*\bunconfirmed\b.*$", strip_code(text)))
+            if unsure:
+                add("HND010", rel, "%d line%s marked Unconfirmed." % (unsure, "" if unsure == 1 else "s"),
+                    "Ask the owner about each one, then replace the mark with the answer and where it came from.")
 
     readme = home.root / "README.md"
     if readme.is_file():
@@ -1621,6 +1672,26 @@ def run_check(home):
                 "A %s of `%s` was started and not finished." % (move.get("op", "move"), move.get("from", "")),
                 "Run any command that changes the workspace: it settles the record from what is on disk.")
 
+    settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
+    have, this = version_tuple(home.skill_version()), version_tuple(__version__)
+    if have < this:
+        add("VER001", settings_rel, "This workspace was set up with version %s of the skill. This copy is %s."
+            % (home.skill_version(), __version__),
+            "Run upgrade --dry-run, tell the owner what's new, and run it for real after their OK.")
+    elif have > this:
+        add("VER002", settings_rel, "This workspace was upgraded by version %s of the skill. This copy is %s."
+            % (home.skill_version(), __version__),
+            "Tell the owner to update this copy of the skill. Until then, leave the workspace's newer rules as they are.")
+
+    friction = home.records / FRICTION_FILE
+    if friction.is_file():
+        with contextlib.suppress(OSError, UnicodeError):
+            notes = [line for line in read_text(friction).splitlines() if line.lstrip().startswith("- ")]
+            if notes:
+                add("FRC001", "%s/%s" % (RECORDS, FRICTION_FILE),
+                    "%d friction note%s from agents." % (len(notes), "" if len(notes) == 1 else "s"),
+                    "Show them to the owner. They can pass them to whoever maintains the skill, then empty the file.")
+
     suppress = home.settings.get("suppress", [])
     kept = []
     for finding in findings:
@@ -1634,6 +1705,31 @@ def run_check(home):
     order = {"error": 0, "warn": 1, "info": 2}
     kept.sort(key=lambda finding: (order[finding["severity"]], finding["rule"], finding["path"]))
     return kept, rows
+
+
+# Findings a brief puts under "Needs attention", besides every error.
+BRIEF_RULES = ("HND005", "HND006", "HND009", "WRK001", "VER001", "FRC001")
+
+
+def brief_gaps(home, findings, rows):
+    """What a brief can't speak for. The last line is always there, so no brief reads as the whole picture."""
+    gaps = []
+    private = home.settings.get("private", [])
+    if private:
+        gaps.append("Private, not opened: %s." % ", ".join("`%s`" % name for name in private))
+    away = [finding["path"] for finding in findings if finding["rule"] == "DOC002"]
+    if away:
+        gaps.append("Document folders that aren't on this computer: %s." % ", ".join("`%s`" % path for path in away))
+    resting = sum(1 for row in rows if not row["archived"] and row["status"].lower().startswith(("paused", "closed")))
+    archived = sum(1 for row in rows if row["archived"])
+    if resting or archived:
+        gaps.append("Hand-offs a brief doesn't read: %d paused or closed, %d archived." % (resting, archived))
+    for finding in findings:
+        if finding["rule"] == "HND010":
+            gaps.append("Not confirmed yet in `%s`: %s" % (finding["path"], finding["message"]))
+    gaps.append("Everything outside the workspace, such as mail, chat and calendars, and anything that was never "
+                "written into a hand-off.")
+    return gaps
 
 
 def cmd_check(args):
@@ -1650,7 +1746,8 @@ def cmd_check(args):
     if args.brief:
         next_step = ("Read the hand-off of every Active or Ongoing work folder, and of any folder under Needs attention. "
                      "Then brief the owner: due or overdue, blocked or waiting on them, out of date, "
-                     "then at most three things to focus on. Then wait.")
+                     "then at most three things to focus on. End with the Not covered list, and add to it "
+                     "anything else you couldn't read. Then wait.")
     if args.json:
         print(json.dumps({"summary": counts, "findings": findings, "work": rows, "next": next_step}, indent=2, ensure_ascii=False))
         return code
@@ -1670,13 +1767,19 @@ def cmd_check(args):
                 continue
             out.say("| %s | %s | %s | %s | %s |" % (row["number"], cell(row["title"]), cell(row["status"]),
                                                    row["last_updated"], cell(row["next_action"])))
-        attention = [finding for finding in findings if finding["rule"] in ("HND005", "HND006", "WRK001") or finding["severity"] == "error"]
+        attention = [finding for finding in findings
+                     if finding["rule"] in BRIEF_RULES or finding["severity"] == "error"]
         if attention:
             out.say()
             out.say("## Needs attention")
             out.say()
             for finding in attention[:10]:
                 out.say("- `%s`: %s" % (finding["path"], finding["message"]))
+        out.say()
+        out.say("## Not covered by this brief")
+        out.say()
+        for gap in brief_gaps(home, findings, rows):
+            out.say("- " + gap)
         return out.finish(next_step, code)
     out.say("# Workspace check · %s" % iso())
     out.say()
@@ -2493,6 +2596,96 @@ def cmd_connect(args):
 
 
 # ----------------------------------------------------------------------------
+# upgrade: bring a workspace that already exists up to this version of the skill
+# ----------------------------------------------------------------------------
+
+def rules_section(home, state, version, titles):
+    """Rules a workspace set up before `version` lacks, in the template's own words, between this skill's markers."""
+    rendered = render("home-AGENTS.md", home_context(home, state.groups))
+    lines = []
+    for title in titles:
+        match = re.search(r"^\d+\.[ \t]+(\*\*%s\*\*.*)$" % re.escape(title), rendered, re.M)
+        if match is None:
+            raise Refuse(
+                "The rule `%s` isn't in the rules template." % title,
+                "This is a fault in the skill. Tell the owner and stop.",
+            )
+        lines.append("- " + match.group(1))
+    return "\n".join(
+        ["<!-- agent-workspace-setup:rules-%s -->" % version, "## Added with version %s" % version, ""]
+        + lines + ["<!-- /agent-workspace-setup:rules-%s -->" % version]
+    ) + "\n"
+
+
+def cmd_upgrade(args):
+    home = open_home(args)
+    have, this = home.skill_version(), __version__
+    out = Out()
+    if version_tuple(have) > version_tuple(this):
+        out.say("This workspace was upgraded by version %s of the skill. This copy of the skill is %s, which is older."
+                % (have, this))
+        return out.finish("Nothing was changed. Tell the owner to update this copy of the skill.")
+    if version_tuple(have) == version_tuple(this):
+        out.say("This workspace is already at version %s." % this)
+        return out.finish("Nothing to do.")
+    pending = [step for step in UPGRADES if version_tuple(have) < version_tuple(step["version"]) <= version_tuple(this)]
+    rules_path = home.root / "AGENTS.md"
+    if not rules_path.is_file():
+        raise Refuse(
+            "The workspace rules, `AGENTS.md`, are missing, so the new rules have nowhere to go. Nothing was changed.",
+            "Run setup again: it adds only what is missing. Then run upgrade again.",
+        )
+    text = read_text(rules_path)
+    state = State(home)
+    sections = []
+    for step in pending:
+        missing = [title for title in step["rules"] if "**%s**" % title not in text]
+        if missing and "agent-workspace-setup:rules-%s " % step["version"] not in text:
+            sections.append(rules_section(home, state, step["version"], missing))
+    settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
+    out.say("# Upgrade to version %s%s" % (this, " (dry run): nothing was written" if args.dry_run else ""))
+    out.say()
+    out.say("This workspace was set up with version %s of the skill." % have)
+    out.say()
+    out.say("## What's new")
+    out.say()
+    news = [line for step in pending for line in step["news"]]
+    for line in news or ["Nothing that changes how a workspace is used."]:
+        out.say("- " + line)
+    out.say()
+    out.say("## What %s" % ("would change" if args.dry_run else "changed"))
+    out.say()
+    if sections:
+        out.say("- `AGENTS.md`: the section below is added at the end. Nothing else in the file changes.")
+    else:
+        out.say("- `AGENTS.md`: nothing. It needs no new rule.")
+    out.say("- `%s`: the recorded version becomes %s." % (settings_rel, this))
+    out.say("- Nothing else. No hand-off, no work folder and no number is touched.")
+    if sections:
+        out.say()
+        out.say("```markdown")
+        out.say("\n".join(sections).rstrip("\n"))
+        out.say("```")
+    if args.dry_run:
+        return out.finish("Tell the owner what's new in plain words, and show them the exact text for `AGENTS.md`. "
+                          "When they approve, run upgrade without --dry-run.")
+    with lock(home):
+        if sections:
+            gap = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") or not text else "\n\n")
+            with open(rules_path, "a", encoding="utf-8", newline="\n") as handle:
+                handle.write(gap + "\n".join(sections))
+        settings_path = home.records / SETTINGS_FILE
+        recorded = json.loads(read_text(settings_path))
+        recorded["skill_version"] = this
+        draft = settings_path.with_name(SETTINGS_FILE + ".new")
+        with open(draft, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(recorded, indent=2, ensure_ascii=False) + "\n")
+        os.replace(str(draft), str(settings_path))
+    return out.finish("Tell the owner what changed. Some tools read the rules only when they start, "
+                      "so they should restart those tools.")
+
+
+# ----------------------------------------------------------------------------
 # Command line
 # ----------------------------------------------------------------------------
 
@@ -2581,6 +2774,9 @@ def build_parser():
     sub.add_argument("--keep", action="append", metavar="NUMBER=KEY", help="which folder keeps a number that is on two")
     sub.add_argument("--floor", action="append", metavar="GROUP=COUNTER", help="the highest number known to be used")
     sub.add_argument("--retire-missing", action="store_true", help="retire numbers whose folders are gone")
+
+    add("upgrade", cmd_upgrade, "After the skill was updated: say what's new, and add new rules to this workspace.",
+        dry_run=True)
     return parser
 
 
@@ -2596,6 +2792,16 @@ def main(argv=None):
         print()
         print("**Next:** " + refusal.next_step)
         return 1
+    except Exception as fault:  # a fault in this script, not in the workspace
+        frames = [frame for frame in traceback.extract_tb(fault.__traceback__) if frame.filename == __file__]
+        line = frames[-1].lineno if frames else 0
+        print("The script hit a fault and stopped: %s: %s (`%s`, workspace.py line %d, version %s)."
+              % (type(fault).__name__, fault, args.command, line, __version__))
+        print()
+        print("**Next:** This is a fault in the skill. Tell the owner, and add the line above to `%s/%s` "
+              "if there is a workspace. Run check before any other command, and don't repeat this one."
+              % (RECORDS, FRICTION_FILE))
+        return 2
 
 
 if __name__ == "__main__":

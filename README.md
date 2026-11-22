@@ -43,7 +43,7 @@ The names in the example are made up.
 
 **Cowork**
 
-1. Download `agent-workspace-setup-0.1.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.2.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **Claude Code**
@@ -78,7 +78,7 @@ The next day, open a session in a project folder and say "Continue this project.
 ## What it promises
 
 - **A preview before every change.** Each command that writes has a dry run.
-- **No deleting, no overwriting.** The script creates new files and folders. It never deletes anything and never overwrites a file of yours.
+- **No deleting, no overwriting.** The script creates new files and folders. It never deletes anything and never overwrites a file of yours. After you update the skill, it can add new rules to the end of your `AGENTS.md`, and only with your OK.
 - **Every move can be undone.** A rename, a move or an archive is logged before it happens.
 - **Your documents stay where they are.** The workspace records where they live, and agents read them by path.
 - **Private folders stay closed.** You name them once. The rules tell every agent to leave them shut, and the script never opens them.
@@ -99,10 +99,12 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 |---|---|
 | "Add a project" | A new numbered folder with the six files |
 | "Check my workspace" | A read-only check, with a fix for each finding |
-| "Brief me" | Where every piece of work stands |
+| "Brief me" | Where every piece of work stands, and what the brief didn't cover |
+| "Tidy up my workspace" | A hand-off is brought up to date from its own log. You see the before and after first |
 | "Bring in this folder" | An existing folder gets a number and the files it lacks. Its own files stay as they are |
 | "Rename this", "Archive this", "Undo that" | The move is previewed, logged and reversible |
 | "Connect Codex" | The skill is copied into another tool's skills folder, after you see the exact folder |
+| "Upgrade my workspace" | After you update the skill: what's new, and the new rules for your `AGENTS.md`, after a preview |
 
 `SKILL.md` and the files in `references/` have the details.
 
@@ -110,14 +112,14 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 
 | What | How | On |
 |---|---|---|
-| Claude Code | Automated runs of three scenarios on Sonnet: setup, a next-day restart, and a safety test | macOS, Linux, Windows |
-| Codex | One hands-on run | macOS |
-| Cowork | One hands-on run on Sonnet | macOS |
-| The script alone | 80 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| Claude Code | Automated runs of five scenarios on Sonnet: setup, a next-day restart, a safety test, which plain requests start the skill, and upgrade with tidy-up | macOS. Version 0.1.0 also ran on Linux and Windows |
+| Codex | One hands-on run, on version 0.1.0 | macOS |
+| Cowork | One hands-on run on Sonnet, on version 0.1.0 | macOS |
+| The script alone | 97 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
-Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows.
+Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows. The requests that are new in 0.2.0, tidy up and upgrade, have been tested with Claude Code only.
 
-This is version 0.1.0. Try it on a test folder first.
+This is version 0.2.0. Try it on a test folder first.
 
 ## Questions and problems
 

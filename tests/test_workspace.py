@@ -946,6 +946,205 @@ class ToolTests(Base):
         self.assertEqual(before, manifest(self.tmp))
 
 
+class UpgradeAndBriefTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.build(private=["Private"])
+        self.settings_path = self.home / "_workspace" / "settings.json"
+        self.rules_path = self.home / "AGENTS.md"
+
+    def settings(self):
+        return json.loads(self.settings_path.read_text(encoding="utf-8"))
+
+    def make_older(self):
+        """Turn this workspace into one that the first release set up: no version, and no newer rule."""
+        settings = self.settings()
+        settings.pop("skill_version")
+        settings["my_own_note"] = "keep me"
+        self.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        lines = self.rules_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        kept = [line for line in lines if "**Say where a fact came from.**" not in line]
+        self.assertEqual(len(lines) - len(kept), 1)
+        self.rules_path.write_text("".join(kept), encoding="utf-8")
+
+    def set_next_actions(self, body):
+        path = self.project() / "HANDOFF.md"
+        text = path.read_text(encoding="utf-8")
+        text = re.sub(r"(## Next actions\n\n).*?(\n\n## Don't forget)", lambda m: m.group(1) + body + m.group(2), text, flags=re.S)
+        path.write_text(text, encoding="utf-8")
+
+    def test_a_new_workspace_records_the_version_and_has_the_newest_rules(self):
+        self.assertEqual(self.settings()["skill_version"], ws.__version__)
+        rules = self.rules_path.read_text(encoding="utf-8")
+        self.assertIn("**Say where a fact came from.**", rules)
+        self.assertNotIn("agent-workspace-setup:rules-", rules)
+        self.assertNotIn("VER001", self.rules())
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("already at version", output)
+
+    def test_the_check_and_the_brief_name_an_older_workspace(self):
+        self.make_older()
+        self.assertIn("VER001", self.rules())
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("set up with version 0.1.0", output)
+
+    def test_upgrade_dry_run_writes_nothing_and_shows_the_exact_text(self):
+        self.make_older()
+        before = manifest(self.tmp)
+        code, output = run("upgrade", "--home", self.home, "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.tmp))
+        self.assertIn("## What's new", output)
+        self.assertIn("```markdown", output)
+        self.assertIn("- **Say where a fact came from.**", output)
+        self.assertIn("(Ana in chat,", output)
+        self.assertNotIn("{{", output)
+
+    def test_upgrade_adds_one_section_and_changes_nothing_else(self):
+        self.make_older()
+        old_rules = self.rules_path.read_text(encoding="utf-8")
+        before = manifest(self.home)
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        new_rules = self.rules_path.read_text(encoding="utf-8")
+        self.assertTrue(new_rules.startswith(old_rules))
+        self.assertEqual(new_rules.count("<!-- agent-workspace-setup:rules-0.2.0 -->"), 1)
+        self.assertEqual(new_rules.count("**Say where a fact came from.**"), 1)
+        self.assertEqual(self.settings()["skill_version"], ws.__version__)
+        self.assertEqual(self.settings()["my_own_note"], "keep me")
+        after = manifest(self.home)
+        changed = sorted(path for path in set(before) | set(after) if before.get(path) != after.get(path))
+        self.assertEqual(changed, ["AGENTS.md", os.path.join("_workspace", "settings.json")])
+        self.assertNotIn("VER001", self.rules())
+        code, output = run("upgrade", "--home", self.home)
+        self.assertIn("already at version", output)
+        self.assertEqual(self.rules_path.read_text(encoding="utf-8"), new_rules)
+
+    def test_upgrade_adds_no_rule_the_home_already_has(self):
+        settings = self.settings()
+        settings.pop("skill_version")
+        self.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        old_rules = self.rules_path.read_text(encoding="utf-8")
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("It needs no new rule", output)
+        self.assertEqual(self.rules_path.read_text(encoding="utf-8"), old_rules)
+        self.assertEqual(self.settings()["skill_version"], ws.__version__)
+
+    def test_upgrade_refuses_when_the_rules_file_is_missing(self):
+        self.make_older()
+        self.rules_path.unlink()
+        before = manifest(self.home)
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 1, output)
+        self.assertIn("**Next:**", output)
+        self.assertEqual(before, manifest(self.home))
+
+    def test_a_workspace_newer_than_this_copy_of_the_skill_is_left_alone(self):
+        settings = self.settings()
+        settings["skill_version"] = "9.0.0"
+        self.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        self.assertIn("VER002", self.rules())
+        before = manifest(self.home)
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("older", output)
+        self.assertEqual(before, manifest(self.home))
+
+    def test_every_upgrade_rule_is_in_the_rules_template(self):
+        template = (SKILL_DIR / "assets" / "templates" / "home-AGENTS.md").read_text(encoding="utf-8")
+        versions = [step["version"] for step in ws.UPGRADES]
+        self.assertEqual(versions, sorted(versions, key=ws.version_tuple))
+        self.assertLessEqual(ws.version_tuple(versions[-1]), ws.version_tuple(ws.__version__))
+        for step in ws.UPGRADES:
+            self.assertTrue(step["news"], step["version"])
+            for title in step["rules"]:
+                self.assertRegex(template, r"(?m)^\d+\. \*\*%s\*\*" % re.escape(title))
+
+    def test_brief_ends_with_what_it_did_not_cover(self):
+        code, output = run("new", "--home", self.home, "--title", "Old fence", "--status", "Paused")
+        self.assertEqual(code, 0, output)
+        settings = self.settings()
+        settings["documents"] = ["../Not here"]
+        self.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        tail = output.split("## Not covered by this brief")[1]
+        self.assertIn("Private, not opened: `Private`", tail)
+        self.assertIn("aren't on this computer", tail)
+        self.assertIn("Not here", tail)
+        self.assertIn("1 paused or closed, 0 archived", tail)
+        self.assertIn("mail, chat and calendars", tail)
+        self.assertIn("End with the Not covered list", output)
+
+    def test_brief_always_says_what_lies_outside_the_workspace(self):
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("## Not covered by this brief", output)
+        self.assertIn("Everything outside the workspace", output)
+
+    def test_work_with_no_next_action_is_named(self):
+        self.assertNotIn("HND009", self.rules())
+        self.set_next_actions("1. None yet.")
+        self.assertIn("HND009", self.rules())
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("Next actions names nothing to do", output)
+        self.set_next_actions("- Call the roofer about the leak.")
+        self.assertNotIn("HND009", self.rules())
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("Call the roofer about the leak.", output)
+        self.set_next_actions("Nothing is planned.")
+        self.assertIn("HND009", self.rules())
+
+    def test_paused_work_needs_no_next_action(self):
+        path = self.project() / "HANDOFF.md"
+        path.write_text(path.read_text(encoding="utf-8").replace("**Status:** Active", "**Status:** Paused"), encoding="utf-8")
+        self.set_next_actions("1. None yet.")
+        self.assertNotIn("HND009", self.rules())
+
+    def test_lines_marked_unconfirmed_are_counted(self):
+        path = self.project() / "HANDOFF.md"
+        text = path.read_text(encoding="utf-8").replace(
+            "## Next actions",
+            "- The permit expires in May. Unconfirmed (ask the owner).\n- Budget is 40,000 (unconfirmed).\n"
+            "- Mark what you can't check `Unconfirmed`.\n\n## Next actions")
+        path.write_text(text, encoding="utf-8")
+        findings = [f for f in self.check()[1]["findings"] if f["rule"] == "HND010"]
+        self.assertEqual(len(findings), 1)
+        self.assertIn("2 lines marked Unconfirmed", findings[0]["message"])
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("Not confirmed yet in", output.split("## Not covered by this brief")[1])
+
+    def test_friction_notes_are_counted(self):
+        self.assertNotIn("FRC001", self.rules())
+        notes = self.home / "_workspace" / "friction.md"
+        notes.write_text("# Friction notes\n\n", encoding="utf-8")
+        self.assertNotIn("FRC001", self.rules())
+        notes.write_text("# Friction notes\n\n- 2026-01-31 · a tool · new --kind client · the kind was refused\n"
+                         "- 2026-02-01 · a tool · rename · no number given\n", encoding="utf-8")
+        findings = [f for f in self.check()[1]["findings"] if f["rule"] == "FRC001"]
+        self.assertEqual(len(findings), 1)
+        self.assertIn("2 friction notes", findings[0]["message"])
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertIn("2 friction notes", output)
+
+    def test_a_fault_in_the_script_ends_with_a_next_line(self):
+        def boom(args):
+            raise KeyError("oops")
+        real = ws.cmd_map
+        ws.cmd_map = boom
+        try:
+            code, output = run("map", "--home", self.home)
+        finally:
+            ws.cmd_map = real
+        self.assertEqual(code, 2, output)
+        self.assertIn("fault", output)
+        self.assertIn("KeyError", output)
+        self.assertIn("version %s" % ws.__version__, output)
+        self.assertIn("**Next:**", output)
+        self.assertNotIn("Traceback", output)
+
+
 class PackageTests(unittest.TestCase):
     """The skill's own text: what a host loads and what a person reads."""
 
@@ -999,8 +1198,22 @@ class PackageTests(unittest.TestCase):
 
     def test_skill_md_stays_short(self):
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-        self.assertLess(len(text.encode("utf-8")), 12000)
+        self.assertLess(len(text.encode("utf-8")), 13500)
         self.assertLess(len(text.splitlines()), 140)
+
+    def test_the_docs_name_the_current_version(self):
+        modes = (SKILL_DIR / "references" / "modes.md").read_text(encoding="utf-8")
+        self.assertIn('"skill_version": "%s"' % ws.__version__, modes)
+        path = REPO / "public" / "CHANGELOG.md"  # in the public repo the same file sits at the top
+        changelog = (path if path.is_file() else REPO / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("## %s" % ws.__version__, changelog)
+
+    def test_no_file_still_says_a_work_folder_has_three_files(self):
+        for path in self.markdown():
+            text = path.read_text(encoding="utf-8")
+            self.assertNotRegex(text, r"(?i)three small files", str(path))
+            self.assertNotIn("`AGENTS.md`, `CLAUDE.md` and `HANDOFF.md`", text, str(path))
+            self.assertNotIn("`HANDOFF.md`, `AGENTS.md` and a one-line `CLAUDE.md`", text, str(path))
 
     def test_every_local_link_resolves(self):
         for path in self.markdown():
