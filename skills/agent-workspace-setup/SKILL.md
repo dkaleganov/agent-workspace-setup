@@ -22,7 +22,7 @@ Keeps work in plain numbered folders so chats are disposable. Every piece of wor
 ## Principles (follow them, and explain them when asked)
 
 1. **Files are the memory.** Each work folder has a `HANDOFF.md` the agent reads first and updates when a task is done.
-2. **One AI home, numbered.** The home takes a ten the owner picks; 90 is only the suggestion. Inside it: Inbox, Projects, Areas, Data, Archive.
+2. **One AI home, numbered.** The home takes a ten the owner picks; 90 is only the suggestion. Inside it: Inbox, Projects, Areas, Data. Closed work goes into `_Archive` inside its own group.
 3. **The script gives every number.** A work folder such as `91.01_Name` keeps its number for good. Never number a folder by hand.
 4. **Documents stay where they are.** Existing folders are read by path. Nothing is written, moved or renamed outside the AI home.
 5. **Agents draft, the owner decides.** Nothing is sent, shared, moved or deleted without the owner's OK for that action.
@@ -42,7 +42,7 @@ Details and formats: [principles.md](references/principles.md).
 
 ## Running the script
 
-The script is `scripts/workspace.py` in this skill's folder. In Claude Code and Cowork that is `${CLAUDE_SKILL_DIR}/scripts/workspace.py`. Run it with `python3`; if that fails, try `python`, then `py -3`. Call it by its full path, and don't `cd` into the skill's folder first. Use it only through the commands in the table below: never import it or call its functions. Quote paths that contain spaces. Each call is one script command and nothing else: no `&&`, no `;`, no pipes, no redirection. Write files, such as the answers file, with your file-writing tool, never with a shell command. Every command ends with a **Next:** line: do what it says. Commands find the workspace from the current folder; pass `--home "<folder>"` when working elsewhere. No Python, or no access to the owner's folders? Follow "Without the script" in [modes.md](references/modes.md).
+The script is `scripts/workspace.py` in this skill's folder. In Claude Code and Cowork that is `${CLAUDE_SKILL_DIR}/scripts/workspace.py`. Run it with `python3`; if that fails, try `python`, then `py -3`. Call it by its full path, and never `cd` first: not into the skill's folder, and not into the workspace. Use it only through the commands in the table below: never import it or call its functions. Quote paths that contain spaces. Each call is one script command and nothing else: no `&&`, no `;`, no pipes, no redirection. Write files, such as the answers file, with your file-writing tool, never with a shell command. Every command ends with a **Next:** line: do what it says. Commands find the workspace from the session's folder. From anywhere else, pass `--home "<folder>"`. No Python, or no access to the owner's folders? Follow "Without the script" in [modes.md](references/modes.md).
 
 **Friction notes.** When a command errors, or its message leaves you unsure what to do, add one line to `_workspace/friction.md` in the home (create it if it's missing): `- <date> · <tool> · <the command, without paths> · <what happened>`. No file contents, no names. A refusal with a clear **Next:** line isn't friction. With no workspace yet, skip it. Tell the owner at the end.
 
@@ -89,7 +89,7 @@ A folder that already sits inside the AI home is different: `adopt "<folder>" --
 
 - **Check:** run `check`. Report errors first, then warnings, then a count of info findings. Follow its **Next:** line.
 - **New work folder:** `new --title "<Title>" --kind project|area|data --purpose "<one line>" --dry-run`, then for real after the OK.
-- **Rename, change group, archive, restore:** `rename <number> "<New title>"`, `move <number> --to area`, `archive <number>`, `restore <number>`. Always `--dry-run` first. The folder keeps its number.
+- **Rename, change group, archive, restore:** `rename <number> "<New title>"`, `move <number> --to area`, `archive <number>`, `restore <number>`. Always `--dry-run` first. The folder keeps its number. `archive` moves it into `_Archive` inside its own group. Don't work in an archived folder: restore it first.
 - **Undo:** `undo` reverses the last of those. If it refuses, both folders are left as they are. Tell the owner why.
 - **The script stops because its records and the folders disagree:** run `reconcile`, show what it proposes, and run it with `--apply` after the OK. When two folders have the same number, the owner picks which one keeps it.
 - **Content findings** (headings, links, a missing field): edit the file after re-reading it, with the owner's OK. The script never edits a hand-off.

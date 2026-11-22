@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0
+
+- **Each group keeps its own archive.** Closed work now moves into `_Archive` inside the group it is in, such as `91_Projects/_Archive/91.02_Old-fence`. It stays beside the work it belonged to, and you can see where it came from. The folder is made the first time something in that group is archived.
+- **No more single archive.** New workspaces don't get a `99_Archive` folder.
+- **Nothing changes in a workspace you already have until you ask.** Its old archive keeps working. The check lists what is in it (ARC001), and "archive 91.02" moves one folder into its own group's archive, after a preview.
+- **Archived work is frozen.** Agents restore a folder before working in it, and the check skips links inside archived folders.
+- "Upgrade my workspace" adds the new archive rule to the end of your `AGENTS.md`, after a preview.
+- 108 unit tests.
+
 ## 0.2.0
 
 - **A brief says what it didn't cover.** "Brief me" now ends with a short list: private folders, documents that aren't on this computer, hand-offs it didn't read, and everything outside the workspace, such as mail and chat.

@@ -131,10 +131,12 @@ class SetupTests(Base):
     def test_setup_builds_a_clean_workspace(self):
         self.build()
         for rel in ("AGENTS.md", "CLAUDE.md", "README.md", "_workspace/settings.json", "_workspace/ledger.jsonl",
-                    "90_Inbox", "91_Projects/AGENTS.md", "92_Areas/AGENTS.md", "95_Data/AGENTS.md", "99_Archive",
+                    "90_Inbox", "91_Projects/AGENTS.md", "92_Areas/AGENTS.md", "95_Data/AGENTS.md",
                     "91_Projects/91.01_Duplex-renovation/AGENTS.md", "91_Projects/91.01_Duplex-renovation/HANDOFF.md",
                     "92_Areas/92.01_Bookkeeping/HANDOFF.md"):
             self.assertTrue((self.home / rel).exists(), rel)
+        self.assertFalse((self.home / "99_Archive").exists())  # each group keeps its own archive, made on first use
+        self.assertEqual([path for path in self.home.rglob("_Archive")], [])
         code, data = self.check()
         self.assertEqual(code, 0)
         self.assertEqual(data["summary"]["error"], 0, data["findings"])
@@ -234,8 +236,9 @@ class SetupTests(Base):
     def test_home_number_is_the_owners_choice(self):
         self.build(home_number=10, home_name="AI")
         home = self.drive / "10_AI"
-        for name in ("10_Inbox", "11_Projects", "12_Areas", "15_Data", "19_Archive"):
+        for name in ("10_Inbox", "11_Projects", "12_Areas", "15_Data"):
             self.assertTrue((home / name).is_dir(), name)
+        self.assertFalse((home / "19_Archive").exists())
         self.assertTrue((home / "11_Projects" / "11.01_Duplex-renovation").is_dir())
         self.assertTrue((home / "12_Areas" / "12.01_Bookkeeping").is_dir())
         code, data = self.check(home)
@@ -453,7 +456,7 @@ class MoveTests(Base):
         key = self.key_of(self.project())
         code, output = run("archive", "--home", self.home, "91.01")
         self.assertEqual(code, 0, output)
-        archived = self.home / "99_Archive" / "91.01_Duplex-renovation"
+        archived = self.home / "91_Projects" / "_Archive" / "91.01_Duplex-renovation"
         self.assertEqual(self.key_of(archived), key)
         self.assertEqual(ws.replay(self.ledger())[0][key]["state"], "archived")
         code, output = run("restore", "--home", self.home, "91.01")
@@ -464,6 +467,7 @@ class MoveTests(Base):
     def test_restore_returns_to_the_group_it_was_in(self):
         run("move", "--home", self.home, "91.01", "--to", "area")
         run("archive", "--home", self.home, "91.01")
+        self.assertTrue((self.home / "92_Areas" / "_Archive" / "91.01_Duplex-renovation").is_dir())
         code, output = run("restore", "--home", self.home, "91.01")
         self.assertEqual(code, 0, output)
         self.assertTrue((self.home / "92_Areas" / "91.01_Duplex-renovation").is_dir())
@@ -491,7 +495,7 @@ class MoveTests(Base):
         code, output = run("rename", "--home", self.home, "91.01", "Taken")
         self.assertEqual(code, 1)  # two folders now carry 91.01, so the script stops
         shutil.rmtree(str(self.home / "91_Projects" / "91.01_Taken"))
-        (self.home / "99_Archive" / "91.01_Duplex-renovation").mkdir()
+        (self.home / "91_Projects" / "_Archive" / "91.01_Duplex-renovation").mkdir(parents=True)
         code, output = run("archive", "--home", self.home, "91.01")
         self.assertEqual(code, 1)
         code, output = run("archive", "--home", self.home, "91.55")
@@ -500,10 +504,11 @@ class MoveTests(Base):
 
     def test_an_interrupted_move_is_settled_from_what_is_on_disk(self):
         key = self.key_of(self.project())
-        target = self.home / "99_Archive" / "91.01_Duplex-renovation"
+        target = self.home / "91_Projects" / "_Archive" / "91.01_Duplex-renovation"
+        target.parent.mkdir()
         ws.append_line(self.home / "_workspace" / "moves.jsonl", {
             "id": 1, "op": "archive", "number": "91.01", "key": key, "state": "pending",
-            "from": "91_Projects/91.01_Duplex-renovation", "to": "99_Archive/91.01_Duplex-renovation",
+            "from": "91_Projects/91.01_Duplex-renovation", "to": "91_Projects/_Archive/91.01_Duplex-renovation",
             "ledger": {"event": "archived", "key": key, "number": "91.01"}})
         os.rename(str(self.project()), str(target))  # the move happened, then the session died
         self.assertIn("MOV001", self.rules())
@@ -518,7 +523,7 @@ class MoveTests(Base):
     def test_private_folders_cannot_be_moved(self):
         settings_path = self.home / "_workspace" / "settings.json"
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        settings["private"] = ["99_Archive"]
+        settings["private"] = ["91_Projects/_Archive"]
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
         code, output = run("archive", "--home", self.home, "91.01")
         self.assertEqual(code, 1)
@@ -813,8 +818,9 @@ class AdoptAndKitTests(Base):
             handoff = archive.read("90_AI-Agents/91_Projects/91.01_Duplex-renovation/HANDOFF.md").decode("utf-8")
             settings = json.loads(archive.read("90_AI-Agents/_workspace/settings.json").decode("utf-8"))
         for name in ("90_AI-Agents/AGENTS.md", "90_AI-Agents/README.md", "90_AI-Agents/_workspace/ledger.jsonl",
-                     "90_AI-Agents/90_Inbox/", "90_AI-Agents/99_Archive/"):
+                     "90_AI-Agents/90_Inbox/"):
             self.assertIn(name, names)
+        self.assertNotIn("90_AI-Agents/99_Archive/", names)
         self.assertFalse([name for name in names if "lock-" in name])
         self.assertIn("Duplex papers in my Drive", handoff)
         self.assertEqual(settings["documents"], [])
@@ -946,6 +952,172 @@ class ToolTests(Base):
         self.assertEqual(before, manifest(self.tmp))
 
 
+class ArchiveTests(Base):
+    def setUp(self):
+        super().setUp()
+        self.build()
+        self.shelf = self.home / "91_Projects" / "_Archive"
+        self.archived = self.shelf / "91.01_Duplex-renovation"
+
+    def make_old_archive(self, number="91.01"):
+        """Put the project where the first two versions archived it: one archive folder for the whole workspace."""
+        key = self.key_of(self.project())
+        old = self.home / "99_Archive"
+        old.mkdir(exist_ok=True)
+        os.rename(str(self.project()), str(old / "91.01_Duplex-renovation"))
+        ws.append_line(self.home / "_workspace" / "ledger.jsonl",
+                       {"event": "archived", "key": key, "number": number, "from_group": 91})
+        run("map", "--home", self.home)  # the older versions refreshed the map after every move
+        return old / "91.01_Duplex-renovation", key
+
+    def test_archive_goes_into_the_group_and_the_archive_is_made_on_first_use(self):
+        before = manifest(self.home)
+        code, output = run("archive", "--home", self.home, "91.01", "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.home))
+        self.assertIn("`91_Projects/91.01_Duplex-renovation`  \u2192  `91_Projects/_Archive/91.01_Duplex-renovation`", output)
+        self.assertIn("`91_Projects/_Archive/` is new", output)
+        self.assertIn("would be made", output)
+        self.assertIn("first set Status to Closed", output)
+        code, output = run("archive", "--home", self.home, "91.01")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.archived.is_dir())
+        self.assertFalse(self.project().exists())
+        self.assertFalse((self.home / "99_Archive").exists())
+        code, data = self.check()
+        self.assertEqual(data["summary"]["error"], 0, data["findings"])
+        self.assertEqual(data["summary"]["warn"], 0, data["findings"])
+        text = (self.home / "README.md").read_text(encoding="utf-8")
+        self.assertIn("(91_Projects/_Archive/91.01_Duplex-renovation/HANDOFF.md)", text)
+        self.assertIn("(archived)", text)
+        code, output = run("new", "--home", self.home, "--title", "Roof repair")
+        code, output = run("archive", "--home", self.home, "91.02")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("is new", output)
+        self.assertTrue((self.shelf / "91.02_Roof-repair").is_dir())
+
+    def test_archiving_twice_is_refused(self):
+        run("archive", "--home", self.home, "91.01")
+        code, output = run("archive", "--home", self.home, "91.01")
+        self.assertEqual(code, 1)
+        self.assertIn("already in its group's archive", output)
+
+    def test_undo_of_an_archive_puts_the_folder_back_and_deletes_nothing(self):
+        run("archive", "--home", self.home, "91.01")
+        code, output = run("undo", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.project().is_dir())
+        self.assertTrue(self.shelf.is_dir())  # the empty archive folder stays: the skill deletes nothing
+        self.assertEqual(self.check()[1]["summary"]["error"], 0)
+
+    def test_an_archived_folder_keeps_its_number_out_of_reach(self):
+        run("archive", "--home", self.home, "91.01")
+        code, output = run("new", "--home", self.home, "--title", "Roof repair")
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "91_Projects" / "91.02_Roof-repair").is_dir())
+        (self.shelf / "91.02_Something-else").mkdir()
+        self.assertIn("NUM001", self.rules())
+
+    def test_archived_work_is_frozen_for_the_link_check(self):
+        run("archive", "--home", self.home, "91.01")
+        readme = self.archived / "README.md"
+        self.assertIn("(../../README.md)", readme.read_text(encoding="utf-8"))
+        self.assertFalse((self.archived / ".." / ".." / "README.md").exists())  # one level deeper now
+        self.assertNotIn("LNK001", self.rules())
+        run("restore", "--home", self.home, "91.01")
+        self.assertNotIn("LNK001", self.rules())
+
+    def test_a_private_archive_is_never_listed(self):
+        run("archive", "--home", self.home, "91.01")
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["private"] = ["91_Projects/_Archive"]
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        for argv in (["check"], ["check", "--brief"], ["map", "--dry-run"]):
+            code, output = run(argv[0], "--home", self.home, *argv[1:])
+            self.assertNotIn("_Archive/91.01", output, argv)  # the folder is not scanned, listed or opened
+        self.assertEqual(len(self.check()[1]["work"]), 1)
+
+    def test_the_old_archive_still_works_and_the_check_points_at_it(self):
+        old, key = self.make_old_archive()
+        code, data = self.check()
+        self.assertEqual(data["summary"]["error"], 0, data["findings"])
+        found = [f for f in data["findings"] if f["rule"] == "ARC001"]
+        self.assertEqual(len(found), 1)
+        self.assertIn("91.01", found[0]["message"])
+        self.assertEqual(found[0]["path"], "99_Archive")
+        code, output = run("restore", "--home", self.home, "91.01")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.project().is_dir())
+        self.assertNotIn("ARC001", self.rules())
+
+    def test_archive_refiles_a_folder_from_the_old_archive_into_its_group(self):
+        old, key = self.make_old_archive()
+        before = manifest(self.home)
+        code, output = run("archive", "--home", self.home, "91.01", "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.home))
+        self.assertIn("`99_Archive/91.01_Duplex-renovation`  \u2192  `91_Projects/_Archive/91.01_Duplex-renovation`", output)
+        code, output = run("archive", "--home", self.home, "91.01")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.archived.is_dir())
+        self.assertFalse(old.exists())
+        self.assertTrue((self.home / "99_Archive").is_dir())  # left for the owner to remove
+        self.assertEqual(ws.replay(self.ledger())[0][key]["state"], "archived")
+        self.assertNotIn("ARC001", self.rules())
+        self.assertEqual(self.check()[1]["summary"]["error"], 0)
+        code, output = run("undo", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue(old.is_dir())
+        self.assertEqual(ws.replay(self.ledger())[0][key]["state"], "archived")
+
+    def test_refiling_follows_the_group_the_folder_last_lived_in(self):
+        run("move", "--home", self.home, "91.01", "--to", "area")
+        key = self.key_of(self.home / "92_Areas" / "91.01_Duplex-renovation")
+        old = self.home / "99_Archive"
+        old.mkdir()
+        os.rename(str(self.home / "92_Areas" / "91.01_Duplex-renovation"), str(old / "91.01_Duplex-renovation"))
+        ws.append_line(self.home / "_workspace" / "ledger.jsonl",
+                       {"event": "archived", "key": key, "number": "91.01", "from_group": 92})
+        code, output = run("archive", "--home", self.home, "91.01")
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "92_Areas" / "_Archive" / "91.01_Duplex-renovation").is_dir())
+
+    def test_a_workspace_with_the_old_archive_keeps_it_when_work_is_added(self):
+        self.make_old_archive()
+        code, output = run("new", "--home", self.home, "--title", "Roof repair")
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "99_Archive" / "91.01_Duplex-renovation").is_dir())
+        self.assertTrue((self.home / "91_Projects" / "91.02_Roof-repair").is_dir())
+
+    def test_upgrade_from_the_last_version_adds_the_archive_rule(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["skill_version"] = "0.2.0"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        rules_path = self.home / "AGENTS.md"
+        lines = rules_path.read_text(encoding="utf-8").splitlines(keepends=True)
+        swapped = ["- Closed work moves to `99_Archive/` and keeps its number, only when Ana says so.\n"
+                   if "**Closed work goes into its own group's archive.**" in line else line for line in lines]
+        self.assertNotEqual(lines, swapped)
+        rules_path.write_text("".join(swapped), encoding="utf-8")
+        old_rules = rules_path.read_text(encoding="utf-8")
+        before = manifest(self.home)
+        code, output = run("upgrade", "--home", self.home, "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.home))
+        self.assertIn("inside its own group", output)
+        self.assertNotIn("rules-0.2.0", output)
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        new_rules = rules_path.read_text(encoding="utf-8")
+        self.assertTrue(new_rules.startswith(old_rules))
+        self.assertEqual(new_rules.count("<!-- agent-workspace-setup:rules-0.3.0 -->"), 1)
+        self.assertIn("- **Closed work goes into its own group's archive.**", new_rules[len(old_rules):])
+        self.assertIn("This replaces any older line", new_rules[len(old_rules):])
+        self.assertNotIn("VER001", self.rules())
+
+
 class UpgradeAndBriefTests(Base):
     def setUp(self):
         super().setUp()
@@ -1060,7 +1232,7 @@ class UpgradeAndBriefTests(Base):
         for step in ws.UPGRADES:
             self.assertTrue(step["news"], step["version"])
             for title in step["rules"]:
-                self.assertRegex(template, r"(?m)^\d+\. \*\*%s\*\*" % re.escape(title))
+                self.assertRegex(template, r"(?m)^(?:\d+\.|-) \*\*%s\*\*" % re.escape(title))
 
     def test_brief_ends_with_what_it_did_not_cover(self):
         code, output = run("new", "--home", self.home, "--title", "Old fence", "--status", "Paused")

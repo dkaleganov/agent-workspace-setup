@@ -20,10 +20,10 @@ This skill moves the memory out of the chat and into files. The agent reads them
   90_Inbox/                      things not sorted yet
   91_Projects/                   work that finishes
     91.01_Duplex-renovation/
+    _Archive/                    closed projects, kept with their numbers
   92_Areas/                      ongoing work
     92.01_Bookkeeping/
   95_Data/                       libraries and archives that agents read
-  99_Archive/                    closed work
 ```
 
 Every project and area folder starts with the same six files:
@@ -43,7 +43,7 @@ The names in the example are made up.
 
 **Cowork**
 
-1. Download `agent-workspace-setup-0.2.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.3.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **Claude Code**
@@ -87,7 +87,8 @@ The next day, open a session in a project folder and say "Continue this project.
 ## How the numbering works
 
 - The AI home takes a ten of your choice, from 10 to 90. Pick one that fits the folders around it.
-- Group folders count up from that ten: Inbox, Projects, Areas, Data, Archive.
+- Group folders count up from that ten: Inbox, Projects, Areas, Data.
+- Closed work moves into `_Archive` inside its own group, so you can always see where it came from.
 - Each project or area gets a number such as `91.01`. The script gives it out and records it in a ledger.
 - A folder keeps its number for good, through every rename, move and archive. A number is never used twice.
 
@@ -102,7 +103,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | "Brief me" | Where every piece of work stands, and what the brief didn't cover |
 | "Tidy up my workspace" | A hand-off is brought up to date from its own log. You see the before and after first |
 | "Bring in this folder" | An existing folder gets a number and the files it lacks. Its own files stay as they are |
-| "Rename this", "Archive this", "Undo that" | The move is previewed, logged and reversible |
+| "Rename this", "Archive this", "Undo that" | The move is previewed, logged and reversible. An archived folder goes into `_Archive` inside its own group |
 | "Connect Codex" | The skill is copied into another tool's skills folder, after you see the exact folder |
 | "Upgrade my workspace" | After you update the skill: what's new, and the new rules for your `AGENTS.md`, after a preview |
 
@@ -115,11 +116,11 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | Claude Code | Automated runs of five scenarios on Sonnet: setup, a next-day restart, a safety test, which plain requests start the skill, and upgrade with tidy-up | macOS. Version 0.1.0 also ran on Linux and Windows |
 | Codex | One hands-on run, on version 0.1.0 | macOS |
 | Cowork | One hands-on run on Sonnet, on version 0.1.0 | macOS |
-| The script alone | 97 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| The script alone | 108 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
-Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows. The requests that are new in 0.2.0, tidy up and upgrade, have been tested with Claude Code only.
+Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows. The requests added since 0.1.0 (tidy up, upgrade, and the archive inside each group) have been tested with Claude Code only.
 
-This is version 0.2.0. Try it on a test folder first.
+This is version 0.3.0. Try it on a test folder first.
 
 ## Questions and problems
 

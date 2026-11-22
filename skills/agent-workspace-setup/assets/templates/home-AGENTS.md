@@ -25,7 +25,7 @@ Each work folder's `AGENTS.md` only points here or adds rules for that folder. I
 - Every work folder has a number, such as `{{EXAMPLE_NUMBER}}`. The agent-workspace-setup skill gives the number. Never number a folder by hand, and never reuse a number. A folder keeps its number for good, even when it is renamed, archived or moved to another group.
 - Not sure where something goes? Put it in `{{G_INBOX}}` and say so.
 - Every work folder starts with the same six files: `README.md` (what the work is), `{{HANDOFF}}` (where it stands), `DECISIONS.md`, `AGENT_SYNC.md`, `AGENTS.md` and a one-line `CLAUDE.md`. Working files sit beside them.
-- Closed work moves to `{{G_ARCHIVE}}` and keeps its number, only when {{OWNER_FIRST}} says so.
+- **Closed work goes into its own group's archive.** When {{OWNER_FIRST}} says to close a piece of work, the skill moves its folder into `_Archive/` inside the group it is in, and the folder keeps its number. Don't work inside an `_Archive/` folder: restore the folder first.
 - **Documents stay where they are.** Existing document folders are read by path. Don't put agent files there, and don't change or add a document there without {{OWNER_FIRST}}'s OK for that action.
 {{DOCUMENTS_BULLETS}}
 - **One master per deliverable.** Draft in the work folder as `_v1`, `_v2`. Once {{OWNER_FIRST}} approves a version, write where the master lives on the hand-off's "Main files" line.

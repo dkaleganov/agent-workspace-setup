@@ -33,7 +33,7 @@ import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
@@ -41,6 +41,8 @@ SETTINGS_FILE = "settings.json"
 LEDGER_FILE = "ledger.jsonl"
 MOVES_FILE = "moves.jsonl"
 FRICTION_FILE = "friction.md"
+# Closed work goes here, inside the group it belongs to.
+ARCHIVE_DIR = "_Archive"
 # A workspace whose settings name no version was set up by the first release.
 FIRST_VERSION = "0.1.0"
 
@@ -61,6 +63,18 @@ UPGRADES = [
         ],
         "rules": ["Say where a fact came from."],
     },
+    {
+        "version": "0.3.0",
+        "news": [
+            "Closed work now goes into an `%s` folder inside its own group, so it stays beside the work it belonged to. "
+            "There is no single archive for the whole workspace any more." % ARCHIVE_DIR,
+            "A folder that is already in the old archive stays valid. The check lists those folders, and "
+            "\"archive <number>\" moves one into the archive of the group it came from, after a preview.",
+            "Agents don't work inside an archive. They restore the folder first.",
+        ],
+        "rules": ["Closed work goes into its own group's archive."],
+        "note": "This replaces any older line in this file about one archive folder for the whole workspace.",
+    },
 ]
 
 # Group numbers are offsets from the home's ten: a home numbered 90 gets 90, 91, 92, 95, 99.
@@ -69,7 +83,8 @@ GROUPS = {
     1: ("Projects", "Work that finishes."),
     2: ("Areas", "Ongoing work."),
     5: ("Data", "Libraries and archives that agents read."),
-    9: ("Archive", "Closed work, kept with its number."),
+    # Offset 9 is the old archive for the whole workspace. New workspaces don't get one: each group keeps its own.
+    9: ("Archive", "Closed work from before each group had its own archive."),
 }
 KINDS = {"project": 1, "area": 2, "data": 5}
 STATUSES = ("Active", "Paused", "Ongoing", "Closed")
@@ -341,38 +356,49 @@ def read_key(handoff_path):
 
 
 def work_on_disk(home, groups):
-    """Folders directly inside the group folders. Numbered ones carry their number and key."""
+    """Folders directly inside the group folders, and inside each group's archive. Numbered ones carry number and key."""
     items = []
     archive_no = home.group_no(9)
+
+    def folders(parent):
+        try:
+            children = sorted(parent.iterdir(), key=lambda p: p.name.lower())
+        except OSError:
+            return []
+        return [child for child in children
+                if not child.is_symlink() and child.is_dir() and not child.name.startswith((".", "_"))
+                and not home.is_private(home.rel(child))]
+
+    def add(child, group_no, archived, legacy):
+        match = WORK_RE.match(child.name)
+        handoff = child / home.handoff
+        item = {
+            "path": child,
+            "rel": home.rel(child),
+            "folder": child.name,
+            "group_now": group_no,
+            "archived": archived,
+            "legacy": legacy,  # True for a folder in the old archive for the whole workspace
+            "number": None,
+            "name": child.name,
+            "key": read_key(handoff) if handoff.is_file() else None,
+            "has_handoff": handoff.is_file(),
+        }
+        if match:
+            item["number"] = "%s.%s" % (match.group(1), match.group(2))
+            item["name"] = match.group(3)
+        items.append(item)
+
     for group_no, group_path in sorted(groups.items()):
         if home.is_private(home.rel(group_path)):
             continue
-        try:
-            children = sorted(group_path.iterdir(), key=lambda p: p.name.lower())
-        except OSError:
-            continue
-        for child in children:
-            if child.is_symlink() or not child.is_dir() or child.name.startswith((".", "_")):
-                continue
-            if home.is_private(home.rel(child)):
-                continue
-            match = WORK_RE.match(child.name)
-            handoff = child / home.handoff
-            item = {
-                "path": child,
-                "rel": home.rel(child),
-                "folder": child.name,
-                "group_now": group_no,
-                "archived": group_no == archive_no,
-                "number": None,
-                "name": child.name,
-                "key": read_key(handoff) if handoff.is_file() else None,
-                "has_handoff": handoff.is_file(),
-            }
-            if match:
-                item["number"] = "%s.%s" % (match.group(1), match.group(2))
-                item["name"] = match.group(3)
-            items.append(item)
+        old_archive = group_no == archive_no
+        for child in folders(group_path):
+            add(child, group_no, old_archive, old_archive)
+        shelf = group_path / ARCHIVE_DIR
+        if not old_archive and shelf.is_dir() and not shelf.is_symlink() and not home.is_private(home.rel(shelf)):
+            for child in folders(shelf):
+                add(child, group_no, True, False)
     return items
 
 
@@ -439,6 +465,8 @@ def replay(events):
                 entry["state"] = "archived"
             elif kind in ("restored", "unretired"):
                 entry["state"] = "active"
+                if event.get("to_group") is not None:
+                    entry["group_now"] = int(event["to_group"])
             elif kind == "moved":
                 entry["group_now"] = int(event["to_group"])
             elif kind == "retired":
@@ -1068,6 +1096,8 @@ def plan_setup(answers):
     for offset in sorted(GROUPS):
         number = home.group_no(offset)
         path = state.groups.get(number)
+        if offset == 9 and path is None:
+            continue  # the old archive is kept only where it already exists
         groups.append({
             "no": number, "offset": offset, "new": path is None,
             "name": path.name if path else "%d%s%s" % (number, home.sep, GROUPS[offset][0]),
@@ -1434,6 +1464,7 @@ RULES = {
     "SYNC001": ("warn", "A sync conflict copy"),
     "INB001": ("info", "Items waiting in the Inbox"),
     "MOV001": ("warn", "A move that didn't finish"),
+    "ARC001": ("info", "Folders in the old archive for the whole workspace"),
     "VER001": ("info", "The workspace was set up with an older version of the skill"),
     "VER002": ("info", "This copy of the skill is older than the workspace"),
     "FRC001": ("info", "Friction notes are waiting"),
@@ -1446,11 +1477,13 @@ def strip_code(text):
     return re.sub(r"`[^`\n]*`", "", text)
 
 
-def managed_files(home, state):
+def managed_files(home, state, live_only=False):
     files = [home.root / name for name in ("AGENTS.md", "CLAUDE.md", "README.md")]
     for path in state.groups.values():
         files.append(path / "AGENTS.md")
     for item in state.disk:
+        if live_only and item["archived"]:
+            continue
         for name in ("README.md", "AGENTS.md", home.handoff, "DECISIONS.md", "AGENT_SYNC.md"):
             files.append(item["path"] / name)
     return [path for path in files if path.is_file()]
@@ -1604,7 +1637,8 @@ def run_check(home):
             if not absent:
                 add("MAP003", "README.md", "A name, status or purpose changed since the map was written.", "Run map.")
 
-    for path in managed_files(home, state):
+    # Archived work is frozen, and one level deeper than it was, so its links aren't checked until it is restored.
+    for path in managed_files(home, state, live_only=True):
         rel = home.rel(path)
         with contextlib.suppress(OSError, UnicodeError):
             for match in re.finditer(r"\[[^\]]*\]\(([^)\s]+)\)", strip_code(read_text(path))):
@@ -1671,6 +1705,14 @@ def run_check(home):
             add("MOV001", "%s/%s" % (RECORDS, MOVES_FILE),
                 "A %s of `%s` was started and not finished." % (move.get("op", "move"), move.get("from", "")),
                 "Run any command that changes the workspace: it settles the record from what is on disk.")
+
+    old_archive = [item for item in state.numbered() if item["legacy"]]
+    if old_archive:
+        add("ARC001", home.rel(state.groups[home.group_no(9)]),
+            "%d folder%s in the old archive for the whole workspace: %s."
+            % (len(old_archive), "" if len(old_archive) == 1 else "s", ", ".join(item["number"] for item in old_archive[:12])),
+            "They stay valid. With the owner's OK, run archive <number> --dry-run for each: it moves the folder into "
+            "the archive of the group it came from.")
 
     settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
     have, this = version_tuple(home.skill_version()), version_tuple(__version__)
@@ -1858,8 +1900,8 @@ def settle_moves(home):
             append_line(home.records / MOVES_FILE, {"id": move["id"], "state": "abandoned", "settled": iso()})
 
 
-def check_move(home, source, target):
-    """Reasons a move is refused. An empty list means it is safe."""
+def check_move(home, source, target, make_parent=False):
+    """Reasons a move is refused. An empty list means it is safe. make_parent allows a target folder that is new."""
     reasons = []
     for label, path in (("from", source), ("to", target)):
         try:
@@ -1879,17 +1921,20 @@ def check_move(home, source, target):
         reasons.append("`%s` isn't here." % home.rel(source))
     if target.exists() or os.path.islink(str(target)):
         reasons.append("`%s` already exists." % home.rel(target))
-    if not target.parent.is_dir():
+    parent = target.parent
+    if make_parent and not parent.exists() and not os.path.islink(str(parent)):
+        parent = parent.parent
+    if not parent.is_dir():
         reasons.append("`%s` isn't here." % home.rel(target.parent))
-    elif source.exists() and os.stat(str(source)).st_dev != os.stat(str(target.parent)).st_dev:
+    elif source.exists() and os.stat(str(source)).st_dev != os.stat(str(parent)).st_dev:
         reasons.append("The move would cross to another drive. Moves stay on one drive.")
     if len(str(target)) > MAX_PATH:
         reasons.append("The new path would be longer than %d characters." % MAX_PATH)
     return reasons
 
 
-def do_move(home, op, entry, source, target, ledger_event, dry_run, out):
-    reasons = check_move(home, source, target)
+def do_move(home, op, entry, source, target, ledger_event, dry_run, out, make_parent=False):
+    reasons = check_move(home, source, target, make_parent)
     if reasons:
         raise Refuse("Nothing was moved:\n" + bullets(reasons), "Tell the owner why, and ask what they want instead.")
     src_rel, dst_rel = home.rel(source), home.rel(target)
@@ -1904,6 +1949,8 @@ def do_move(home, op, entry, source, target, ledger_event, dry_run, out):
         moves, _ = read_moves(home)
         move_id = max([move["id"] for move in moves] + [0]) + 1
         ledger_event = dict(ledger_event, key=entry["key"], number=entry["number"])
+        if make_parent:
+            target.parent.mkdir(exist_ok=True)
         append_line(home.records / MOVES_FILE, {
             "id": move_id, "op": op, "number": entry["number"], "key": entry["key"], "from": src_rel, "to": dst_rel,
             "state": "pending", "time": iso(), "host": host(), "ledger": ledger_event,
@@ -1972,31 +2019,57 @@ def cmd_move(args):
         if done else "Show this to the owner. When they approve, run the same command without --dry-run.")
 
 
+def origin_group(home, state, entry, item):
+    """The group a folder in the old archive belongs to: where the ledger last saw it, else the group in its number."""
+    for number in (entry["group_now"], int(item["number"][:2])):
+        if number != home.group_no(9) and number in state.groups:
+            return number
+    return None
+
+
 def cmd_archive(args):
     home, state, item, entry = prepare_move(args, "archive a folder")
-    if item["archived"]:
-        raise Refuse("%s is already in the archive." % item["number"], "Nothing to do.")
-    archive = state.groups.get(home.group_no(9))
-    if archive is None:
-        raise Refuse("There is no archive group folder numbered %d." % home.group_no(9),
-                     "Run setup again: it adds only what is missing.")
+    if item["archived"] and not item["legacy"]:
+        raise Refuse("%s is already in its group's archive." % item["number"], "Nothing to do.")
+    if item["legacy"]:
+        # Out of the old archive for the whole workspace, into the archive of the group it came from.
+        group_no = origin_group(home, state, entry, item)
+        if group_no is None:
+            raise Refuse("The group this folder came from isn't here, so it stays in the old archive.",
+                         "Run check to see the groups, and ask the owner where it belongs.")
+        op, event = "refile", {"event": "refiled", "to_group": group_no}
+    else:
+        group_no = item["group_now"]
+        op, event = "archive", {"event": "archived", "from_group": group_no, "layout": "group"}
+    shelf = state.groups[group_no] / ARCHIVE_DIR
+    if os.path.islink(str(shelf)) or (shelf.exists() and not shelf.is_dir()):
+        raise Refuse("`%s` isn't a plain folder, so nothing can be archived into it." % home.rel(shelf),
+                     "Tell the owner. They can rename it, then run the command again.")
+    made = not shelf.exists()
     out = Out()
-    done = do_move(home, "archive", entry, item["path"], archive / item["folder"],
-                   {"event": "archived", "from_group": item["group_now"]}, args.dry_run, out)
+    done = do_move(home, op, entry, item["path"], shelf / item["folder"], event, args.dry_run, out, make_parent=True)
+    if made:
+        out.say("`%s/` is new: this group's archive. It %s made for this move." % (home.rel(shelf), "was" if done else "would be"))
+    if op == "refile":
+        return out.finish(
+            "Tell the owner. The folder is still archived, now inside its own group. undo puts it back in the old archive."
+            if done else "Show this to the owner. When they approve this folder, run it without --dry-run.")
     return out.finish(
         "Tell the owner. restore %s or undo brings it back." % item["number"]
-        if done else "Archive only when the owner asked to close this work. When they approve, run it without --dry-run.")
+        if done else "Archive only when the owner asked to close this work. When they approve: first set Status to Closed "
+        "in its hand-off and add a Session log line, then run this without --dry-run.")
 
 
 def cmd_restore(args):
     home, state, item, entry = prepare_move(args, "restore a folder")
     if not item["archived"]:
-        raise Refuse("%s isn't in the archive." % item["number"], "Nothing to do.")
-    group = state.groups.get(entry["group_now"]) or state.groups.get(int(item["number"][:2]))
-    if group is None or group == state.groups.get(home.group_no(9)):
+        raise Refuse("%s isn't in an archive." % item["number"], "Nothing to do.")
+    group_no = origin_group(home, state, entry, item) if item["legacy"] else item["group_now"]
+    if group_no is None:
         raise Refuse("The group this folder came from isn't here.", "Run check to see the groups, then use move.")
     out = Out()
-    done = do_move(home, "restore", entry, item["path"], group / item["folder"], {"event": "restored"}, args.dry_run, out)
+    done = do_move(home, "restore", entry, item["path"], state.groups[group_no] / item["folder"],
+                   {"event": "restored", "to_group": group_no}, args.dry_run, out)
     return out.finish("Tell the owner. undo reverses it." if done
                       else "Show this to the owner. When they approve, run the same command without --dry-run.")
 
@@ -2115,7 +2188,8 @@ def cmd_reconcile(args):
                 event = ({"event": "renumbered", "key": key, "from": number, "to": new_number, "reason": "collision"}
                          if key in state.entries else
                          {"event": "adopted", "key": key, "number": new_number, "name": item["name"],
-                          "group_now": item["group_now"], "state": "archived" if item["archived"] else "active"})
+                          "group_now": item["group_now"] if not item["legacy"] else int(number[:2]),
+                          "state": "archived" if item["archived"] else "active"})
                 proposals.append((event, "`%s` becomes %s." % (item["rel"], new_number)))
                 renames.append((item["path"], item["path"].parent / new_folder,
                                 "Rename `%s` to `%s`." % (item["rel"], new_folder)))
@@ -2138,7 +2212,7 @@ def cmd_reconcile(args):
             continue
         key = item["key"] or new_key()
         proposals.append(({"event": "adopted", "key": key, "number": number, "name": item["name"],
-                           "group_now": item["group_now"] if not item["archived"] else int(number[:2]),
+                           "group_now": item["group_now"] if not item["legacy"] else int(number[:2]),
                            "state": "archived" if item["archived"] else "active"},
                           "Add number %s (`%s`) to the ledger." % (number, item["rel"])))
         if not item["key"]:
@@ -2599,18 +2673,20 @@ def cmd_connect(args):
 # upgrade: bring a workspace that already exists up to this version of the skill
 # ----------------------------------------------------------------------------
 
-def rules_section(home, state, version, titles):
+def rules_section(home, state, version, titles, note=""):
     """Rules a workspace set up before `version` lacks, in the template's own words, between this skill's markers."""
     rendered = render("home-AGENTS.md", home_context(home, state.groups))
     lines = []
     for title in titles:
-        match = re.search(r"^\d+\.[ \t]+(\*\*%s\*\*.*)$" % re.escape(title), rendered, re.M)
+        match = re.search(r"^(?:\d+\.|-)[ \t]+(\*\*%s\*\*.*)$" % re.escape(title), rendered, re.M)
         if match is None:
             raise Refuse(
                 "The rule `%s` isn't in the rules template." % title,
                 "This is a fault in the skill. Tell the owner and stop.",
             )
         lines.append("- " + match.group(1))
+    if note:
+        lines.append("- " + note)
     return "\n".join(
         ["<!-- agent-workspace-setup:rules-%s -->" % version, "## Added with version %s" % version, ""]
         + lines + ["<!-- /agent-workspace-setup:rules-%s -->" % version]
@@ -2641,7 +2717,7 @@ def cmd_upgrade(args):
     for step in pending:
         missing = [title for title in step["rules"] if "**%s**" % title not in text]
         if missing and "agent-workspace-setup:rules-%s " % step["version"] not in text:
-            sections.append(rules_section(home, state, step["version"], missing))
+            sections.append(rules_section(home, state, step["version"], missing, step.get("note", "")))
     settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
     out.say("# Upgrade to version %s%s" % (this, " (dry run): nothing was written" if args.dry_run else ""))
     out.say()
@@ -2739,10 +2815,10 @@ def build_parser():
     sub.add_argument("number")
     sub.add_argument("--to", required=True, help="project, area, data, or a group number")
 
-    sub = add("archive", cmd_archive, "Move closed work to the archive. It keeps its number.", dry_run=True)
+    sub = add("archive", cmd_archive, "Move closed work into its group's archive. It keeps its number.", dry_run=True)
     sub.add_argument("number")
 
-    sub = add("restore", cmd_restore, "Bring a work folder back from the archive.", dry_run=True)
+    sub = add("restore", cmd_restore, "Bring a work folder back out of an archive.", dry_run=True)
     sub.add_argument("number")
 
     add("undo", cmd_undo, "Reverse the last rename, move, archive or restore.", dry_run=True)

@@ -25,11 +25,12 @@ A chat forgets. A folder doesn't. Keep the memory of your work in plain folders 
 ├── _workspace/                  the skill's own records
 ├── 90_Inbox/                    anything not filed yet
 ├── 91_Projects/                 work that finishes
-│   └── 91.01_Duplex-renovation/
+│   ├── 91.01_Duplex-renovation/
+│   └── _Archive/                closed projects, each kept with its number
+│       └── 91.02_Old-fence/
 ├── 92_Areas/                    ongoing work
 │   └── 92.01_Bookkeeping/
-├── 95_Data/                     libraries and archives that agents read
-└── 99_Archive/                  closed work, kept with its number
+└── 95_Data/                     libraries and archives that agents read
 ```
 
 The names in this picture are made up.
@@ -37,7 +38,7 @@ The names in this picture are made up.
 **How the numbers work**
 
 - **The home's number is your choice:** any ten from 10 to 90. Setup looks at the names of the folders around the place you picked and suggests one that fits. 90 is the suggestion when it's free, because it leaves 10 to 80 for your own folders.
-- **Group folders** take numbers inside the home's ten. With a home at 90: 90 Inbox, 91 Projects, 92 Areas, 95 Data, 99 Archive. With a home at 10: 10, 11, 12, 15, 19.
+- **Group folders** take numbers inside the home's ten. With a home at 90: 90 Inbox, 91 Projects, 92 Areas, 95 Data. With a home at 10: 10, 11, 12, 15.
 - **Work folders** get the group's number, a dot and a counter: `91.01`, `91.02`. The script gives the next one.
 - **A folder keeps its number for good.** Rename it, archive it, bring it back, move it from Projects to Areas: the number stays. A project that became ongoing work is still `91.03`, now inside `92_Areas`.
 - **A number is never used twice,** including after you delete a folder.
@@ -53,6 +54,14 @@ The names in this picture are made up.
 - **After restoring a backup** of the whole home, tell your agent the highest number you remember using. It continues above that.
 
 The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by John Noble. It is a looser scheme of its own and copies nothing from it. This skill is independent and isn't endorsed by Johnny.Decimal.
+
+## Closed work
+
+- **Each group keeps its own archive.** When you close a piece of work, its folder moves into `_Archive` inside the group it is in: a closed project stays under Projects, a closed area under Areas. Nothing is deleted.
+- **The folder appears on first use.** A group has no `_Archive` until something in it is archived.
+- **You can always see where it came from:** it sits in its own group, with its number, and the map still lists it as archived.
+- **Archived work is frozen.** To pick it up again, ask to restore it. It goes back into the same group.
+- **Workspaces from the first two versions** have one archive for the whole workspace, such as `99_Archive`. It keeps working. The check lists what is in it, and you can ask to move a folder into its own group's archive, one at a time.
 
 ## Documents stay apart
 
@@ -127,7 +136,7 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 2. **Work:** drafts as `_v1`, `_v2`. The hand-off is updated after each finished task.
 3. **Confirm:** you approve a version. "Main files" says where the master lives.
 4. **Share:** only with your OK for that action.
-5. **Close:** the status becomes Closed. When you say so, the folder moves to the archive and keeps its number.
+5. **Close:** the status becomes Closed. When you say so, the folder moves into its group's `_Archive` and keeps its number.
 
 ## Sessions and agents
 

@@ -20,7 +20,7 @@ For the agent. `SKILL.md` has the short checklists; this file has the detail beh
 
 For each item in `work`: `kind` is `project` (finishes), `area` (ongoing) or `data` (a library); the default is `project`. `status` starts with Active, Paused, Ongoing or Closed. `documents` lists folders the work reads; they stay where they are.
 
-**What setup does:** creates the home if it's new, its records, the five group folders, the home's `AGENTS.md`, `CLAUDE.md` and `README.md`, and each work folder with its six standard files. Then it refreshes the map and runs the check.
+**What setup does:** creates the home if it's new, its records, the four group folders, the home's `AGENTS.md`, `CLAUDE.md` and `README.md`, and each work folder with its six standard files. Then it refreshes the map and runs the check.
 
 **What setup never does:** overwrite a file, or touch a folder outside the home. Running it again adds only what is missing and keeps every edit the owner made.
 
@@ -49,8 +49,8 @@ In this version, bringing in means pointing at folders. Nothing outside the home
 |---|---|
 | `rename <number> "<New title>"` | Renames the folder. The number stays |
 | `move <number> --to project\|area\|data` | Moves it to another group. The number stays, so `91.03` can live in `92_Areas` |
-| `archive <number>` | Moves closed work to the archive. Only when the owner asked to close it |
-| `restore <number>` | Brings it back to the group it was in |
+| `archive <number>` | Moves closed work into `_Archive` inside the group it is in. Only when the owner asked to close it |
+| `restore <number>` | Brings it back out, into the same group |
 | `undo` | Reverses the last of these |
 
 Every one has `--dry-run`. Each move is written to the moves log before it happens. A move is refused when the target exists, when either side is private, when it would leave the home or cross to another drive, and when the records and the folders disagree.
@@ -58,6 +58,17 @@ Every one has `--dry-run`. Each move is written to the moves log before it happe
 `undo` works while the folder and its old place are as the move left them. If the old place is taken, or the folder's key changed, it refuses and leaves both folders where they are.
 
 After a move, run `check`. A link that the move broke is listed with its new target. Edit the link yourself, after re-reading the file, with the owner's OK.
+
+## Upkeep: the archive
+
+Each group keeps its own archive, so closed work stays beside the work it belonged to: `91_Projects/_Archive/91.02_Old-fence`.
+
+- **`_Archive` is made on first use.** A group has none until something in it is archived. The dry run says when the folder would be new.
+- **Where a folder came from** is where it sits: the group around its `_Archive`. The number says where it was first numbered. The two differ when the folder had moved to another group.
+- **Close it, then archive it.** Before the move, with the owner's OK, set Status to Closed in the hand-off and add a Session log line. After the move the folder is frozen.
+- **Archived work is frozen.** Don't work inside `_Archive`. If the owner wants to continue, `restore` first. The folder sits one level deeper there, so the link from its `README.md` up to the map doesn't resolve until it is restored, and `check` skips links in archived folders.
+- **The map still lists it,** marked "(archived)", with a link to where it is.
+- **The older layout.** The first two versions used one archive for the whole workspace, such as `99_Archive`. A workspace that has one keeps it: those folders stay valid, `restore` works on them, and `check` lists them (ARC001). To move one into its own group's archive, run `archive <number> --dry-run`, show it, then run it for real after the OK. One folder at a time, and only the ones the owner names. When the old folder is empty, the owner can delete it. New workspaces don't get one.
 
 ## Upkeep: check
 
@@ -96,12 +107,13 @@ After a move, run `check`. A link that the move broke is listed with its new tar
 | MAP001 | warn | A work folder is missing from the map | `map` |
 | MAP002 | warn | A map table was edited by hand, or its markers are unclear | Fix it with the owner, then `map` |
 | MAP003 | info | A name, status or purpose changed since the map was written | `map` |
-| LNK001 | error | A link that points nowhere | The finding names the new target when a logged move explains it |
+| LNK001 | error | A link that points nowhere. Archived folders are skipped | The finding names the new target when a logged move explains it |
 | DOC001 | warn | An agent file inside a document folder | Ask the owner before moving it |
 | DOC002 | info | A document location that isn't on this computer | Nothing. A task that needs it must stop and say so |
 | SYNC001 | warn | A sync conflict copy of a managed file | Compare both with the owner. Don't pick by date alone |
 | INB001 | info | Items waiting in the Inbox | Go through them with the owner |
 | MOV001 | warn | A move that didn't finish | The next command that changes the workspace settles it |
+| ARC001 | info | Folders in the old archive for the whole workspace | They stay valid. With the owner's OK, `archive <number>` moves one into the archive of its own group |
 | VER001 | info | The workspace was set up with an older version of the skill | `upgrade --dry-run`, then for real after the OK |
 | VER002 | info | This copy of the skill is older than the one that last upgraded the workspace | The owner updates this copy. Leave the workspace's newer rules alone |
 | FRC001 | info | Friction notes from agents are waiting in `_workspace/friction.md` | Show them to the owner. They can pass them on, then empty the file |
@@ -162,10 +174,10 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 
 **The agent can write files and has no Python.** Build a starter by hand, one approved step at a time, and never overwrite a file.
 
-1. Create the home folder, `_workspace/`, and the five group folders, numbered from the home's ten: +0 Inbox, +1 Projects, +2 Areas, +5 Data, +9 Archive.
+1. Create the home folder, `_workspace/`, and the four group folders, numbered from the home's ten: +0 Inbox, +1 Projects, +2 Areas, +5 Data.
 2. Write `_workspace/settings.json`:
    ```json
-   {"version": 1, "skill_version": "0.2.0", "owner": "<name>", "home_number": 90, "separator": "_",
+   {"version": 1, "skill_version": "0.3.0", "owner": "<name>", "home_number": 90, "separator": "_",
     "handoff_file": "HANDOFF.md", "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
    ```
 3. For each file, copy the matching template from `assets/templates`, replace every `{{PLACEHOLDER}}`, and show it before writing it.

@@ -17,7 +17,7 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.2.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.3.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
@@ -47,7 +47,7 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.2.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.3.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
@@ -76,7 +76,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.2.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.3.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -118,7 +118,8 @@ Not tested in this version. The skill is built to work like this:
 | "Record that decision." | Your decision goes into `DECISIONS.md`, with the date and the reason |
 | "Update the hand-off." | The agent writes down where things stand and what comes next |
 | "Rename this project to ..." | The folder is renamed and keeps its number |
-| "Archive this project." | It moves to the archive and keeps its number |
+| "Archive this project." | It moves into `_Archive` inside its own group and keeps its number |
+| "Restore the fence project." | It comes back out of the archive, into the same group |
 | "Undo that." | The last rename, move or archive is reversed |
 | "Check my workspace." | A read-only check, with a fix for each finding |
 | "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. You see the before and after first |
@@ -141,6 +142,8 @@ The project names here are made up.
 1. Install the newer version the same way you installed the first. For Claude Code and Codex, add `--update` to the install line. The old copy is kept in a backup folder.
 2. In a new session, say: "Upgrade my workspace."
 3. The agent tells you what's new and shows the exact text it would add to the end of your `AGENTS.md`. Nothing changes before your OK. No project, hand-off or number is touched.
+
+Coming from 0.1.0 or 0.2.0? Your workspace has one archive folder for everything, such as `99_Archive`. It keeps working. Newly archived work goes into `_Archive` inside its own group. To move an old one across, say "archive 91.02" with its number, and read the preview first.
 
 ## If something looks wrong
 
