@@ -6,8 +6,8 @@ description: >-
   asks to "set up my workspace", "set up an AI workspace", "organize my AI folders", "start a project folder",
   "add a project", "check my workspace", "tidy up my workspace", "brief me", "where does everything stand",
   "rename this project", "archive this project", "undo that move", "connect Codex", "upgrade my workspace",
-  or asks what a workspace file is for. Modes: set up new, bring in existing folders, upkeep (check, tidy up, new work folder, rename,
-  move, archive, restore, undo, reconcile, upgrade), brief me, connect tools, explain. Not for code
+  "set up a daily check", "set up my routines", or asks what a workspace file is for. Modes: set up new, bring in existing folders, upkeep (check, tidy up, new work folder, rename,
+  move, archive, restore, undo, reconcile, upgrade), brief me, routines, connect tools, explain. Not for code
   repositories or for writing a project's content.
 license: MIT. The full text is in LICENSE.txt.
 compatibility: Works with any agent that can read and write local files, such as Claude Code, Codex and Cowork. The script needs Python 3.9 or later (standard library only). Without Python, or in a chat app, follow "Without the script" in references/modes.md.
@@ -32,7 +32,7 @@ Details and formats: [principles.md](references/principles.md).
 
 ## Hard rules (every mode)
 
-1. **Approve before change.** Change files only after the owner approves those specific changes. If they haven't named them yet, run the command with `--dry-run`, show the output, and stop. If their message already names exactly what to change ("archive 91.02", or "create it" after seeing the preview), that is the approval: run the `--dry-run` to check, then the real command, then report what changed. The one write that needs no OK is a friction note (below).
+1. **Approve before change.** Change files only after the owner approves those specific changes. If they haven't named them yet, run the command with `--dry-run`, show the output, and stop. If their message already names exactly what to change ("archive 91.02", or "create it" after seeing the preview), that is the approval: run the `--dry-run` to check, then the real command, then report what changed. Two writes need no OK each time: a friction note (below), and a routine run the owner set up.
 2. **Only approved changes.** Rename, move or archive only what the owner approved by name or number. Never "also tidy" something else. This skill deletes nothing. If something should be deleted, tell the owner and let them do it.
 3. **Private stays closed.** Never list or open a folder the owner called private, even when asked to "look at everything". Open a file there only when the owner names that file.
 4. **Open only what you need.** Don't search or open documents across folders. In a synced folder, that downloads every cloud-only file. Open files by path, one work folder at a time.
@@ -54,6 +54,7 @@ The script is `scripts/workspace.py` in this skill's folder. In Claude Code and 
 | "Bring my folders in", "what's in this folder?" | [Bring in existing](#bring-in-existing) |
 | "Check my workspace", "tidy up", "new project", "rename", "archive", "undo" | [Upkeep](#upkeep) |
 | "Brief me", "where does everything stand?" | [Brief me](#brief-me) |
+| "Set up a daily check", "set up my routines", "run the daily check" | [Routines](#routines-optional) |
 | "Add Codex", "use this in another tool" | [Connect tools](#connect-tools) |
 | "What is this file for?", "why did you refuse?" | [Explain](#explain) |
 
@@ -100,6 +101,17 @@ A folder that already sits inside the AI home is different: `adopt "<folder>" --
 
 Run `check --brief`. Read the hand-off of every Active or Ongoing work folder, and of any folder under "Needs attention". Brief the owner with one line per item, in this order: due or overdue; blocked or waiting on them; out of date; then at most three things to focus on. End with what the brief didn't cover: the script's "Not covered" list, plus anything else you couldn't read. Then wait. Don't edit any hand-off while briefing.
 
+## Routines (optional)
+
+A routine runs the check on a schedule, rewrites `STATUS.md` at the top of the home, and speaks up only when something needs the owner. It is optional. Nothing is scheduled unless the owner says yes to that job.
+
+1. **Offer once.** After setup, when the first task is written down, or when `check` says none is set up: say in two lines what a daily check does, and that it is optional. On a no, which includes "don't schedule anything", run `routine offer --answer no` before anything else, so no later session asks again. On "later", `--answer later`.
+2. **Preview:** `routine plan --runner <this tool>`, with `claude-desktop`, `cowork` or `codex`. Show the job, its schedule, its prompt and the one command to pre-approve.
+3. **Create** the scheduled task in this tool with that prompt, only after the yes for that job. If this tool can't schedule, say so and hand the owner the prompt.
+4. **Record and prove:** `routine record --kind daily --runner <name> --at "<when>"`, then `routine run --kind daily --runner <name>`. Confirm that `STATUS.md` appeared.
+
+A run reads and reports. It never edits the owner's files. `routine status` shows what is set up; `routine switch` and `routine remove` change it, after a preview. Limits per tool, and what a check can't catch: "Routines" in [modes.md](references/modes.md).
+
 ## Connect tools
 
 - **Where is the skill installed?** `install` with no options. It changes nothing.
@@ -129,6 +141,7 @@ Answer in plain words from [principles.md](references/principles.md): what each 
 | `connect --tool T [--remove] [--dry-run]` | Adds one section to a tool's personal instructions | That one file, with the OK |
 | `reconcile [--apply] [--keep N=KEY] [--floor G=C]` | Proposes how to bring the records back in line | Only with `--apply` |
 | `upgrade [--dry-run]` | After a skill update: says what's new, and adds new rules to the home's `AGENTS.md` | A section at the end of that file |
+| `routine plan`, `run`, `status`, `record`, `switch`, `remove`, `offer` | The optional scheduled check | `STATUS.md`, its records and the settings. `plan` and `status` write nothing |
 
 ## Before you finish
 

@@ -43,7 +43,7 @@ The names in the example are made up.
 
 **Cowork**
 
-1. Download `agent-workspace-setup-0.3.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.4.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **Claude Code**
@@ -101,6 +101,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | "Add a project" | A new numbered folder with the six files |
 | "Check my workspace" | A read-only check, with a fix for each finding |
 | "Brief me" | Where every piece of work stands, and what the brief didn't cover |
+| "Set up a daily check" | Optional. A scheduled check that rewrites `STATUS.md` and speaks up only when something needs you |
 | "Tidy up my workspace" | A hand-off is brought up to date from its own log. You see the before and after first |
 | "Bring in this folder" | An existing folder gets a number and the files it lacks. Its own files stay as they are |
 | "Rename this", "Archive this", "Undo that" | The move is previewed, logged and reversible. An archived folder goes into `_Archive` inside its own group |
@@ -109,18 +110,34 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 
 `SKILL.md` and the files in `references/` have the details.
 
+## Keeping it tidy
+
+A folder is memory only while someone keeps it current. Three things help:
+
+- **A written order for what wins.** When two files disagree, the agent works from your latest word, then the newest decision, then the hand-off, then the README. It must flag the conflict and ask you.
+- **A check that reads dates.** It finds an overdue next action, an open conflict, a hand-off that fell behind its own log, and a decision that was replaced and is still cited.
+- **An optional daily check.** If you want one, the skill sets up a scheduled task that rewrites `STATUS.md` and speaks up only when something needs you. It is off until you say yes.
+
+What no check will catch:
+
+- A wrong fact written the same way everywhere.
+- Anything that was never written down.
+- Two files that state one fact differently in prose. A tidy-up looks for those, and can miss some.
+- A computer that is off. Every scheduler that can see your folder needs its app open and the computer awake.
+
 ## Where it has been tested
 
 | What | How | On |
 |---|---|---|
-| Claude Code | Automated runs of five scenarios on Sonnet: setup, a next-day restart, a safety test, which plain requests start the skill, and upgrade with tidy-up | macOS. Version 0.1.0 also ran on Linux and Windows |
+| Claude Code | Automated runs of seven scenarios on Sonnet: setup, a next-day restart, a safety test, which plain requests start the skill, upgrade with tidy-up, a planted contradiction, and the optional daily check | macOS. Version 0.1.0 also ran on Linux and Windows |
+| The daily check as a scheduled task | One scheduled run in the Claude desktop app | macOS |
 | Codex | One hands-on run, on version 0.1.0 | macOS |
 | Cowork | One hands-on run on Sonnet, on version 0.1.0 | macOS |
-| The script alone | 108 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| The script alone | 130 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
-Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows. The requests added since 0.1.0 (tidy up, upgrade, and the archive inside each group) have been tested with Claude Code only.
+Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, and Cowork or Codex on Windows. The requests added since 0.1.0 (tidy up, upgrade, the archive inside each group, and the optional daily check) have been tested with Claude Code only.
 
-This is version 0.3.0. Try it on a test folder first.
+This is version 0.4.0. Try it on a test folder first.
 
 ## Questions and problems
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- **A written order for what wins.** When two files disagree, the rules now say which one an agent works from: your word now, then the newest decision, then the hand-off, then the README. The agent must flag the conflict with a line that starts `Conflict:`, and ask you.
+- **Decisions carry numbers,** such as `D-004`, so a file can cite one and the check can tell when it was replaced.
+- **Ten new checks,** all run by the script with no AI: an overdue next action, an open conflict, a hand-off that is behind its own log, a long wait, a citation of a replaced or missing decision, a README and hand-off that give different purposes, an old open note, closed work that was never archived, and an old Inbox item.
+- **Optional routines.** A daily check can rewrite `STATUS.md` at the top of your workspace and speak up only when something needs you. The skill offers it once. Nothing is scheduled unless you say yes, and a no is remembered.
+- **A routine that stops is flagged.** Each run is logged, and the check says when one has gone quiet, overlapped with a second runner, or failed.
+- **Honest limits,** in the README: what no check will catch.
+- "Upgrade my workspace" adds the new rules to the end of your `AGENTS.md`, after a preview.
+
 ## 0.3.0
 
 - **Each group keeps its own archive.** Closed work now moves into `_Archive` inside the group it is in, such as `91_Projects/_Archive/91.02_Old-fence`. It stays beside the work it belonged to, and you can see where it came from. The folder is made the first time something in that group is archived.

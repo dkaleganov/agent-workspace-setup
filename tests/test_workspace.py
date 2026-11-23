@@ -175,6 +175,9 @@ class SetupTests(Base):
         text = handoff.read_text(encoding="utf-8")
         handoff.write_text(re.sub(r"\*\*Purpose:\*\* [^·]*·", "**Purpose:** Finish with the permit closed. ·", text, count=1),
                            encoding="utf-8")
+        readme = self.project() / "README.md"
+        readme.write_text(re.sub(r"(?m)^\*\*Purpose:\*\* .*$", "**Purpose:** Finish with the permit closed.",
+                                 readme.read_text(encoding="utf-8"), count=1), encoding="utf-8")
         code, data = self.check()
         hits = [finding for finding in data["findings"] if finding["rule"] == "MAP003"]
         self.assertEqual(len(hits), 1, data["findings"])
@@ -1317,6 +1320,329 @@ class UpgradeAndBriefTests(Base):
         self.assertNotIn("Traceback", output)
 
 
+class TidyAndRoutineTests(Base):
+    """The order for what wins, the checks that read dates, and the optional routines."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_clock = os.environ.get("AGENT_WORKSPACE_NOW")
+        self.clock("2026-03-01")
+        self.build(private=["Private"])
+        self.handoff = self.project() / "HANDOFF.md"
+        self.settings_path = self.home / "_workspace" / "settings.json"
+        self.status = self.home / "STATUS.md"
+
+    def tearDown(self):
+        if self.saved_clock is None:
+            os.environ.pop("AGENT_WORKSPACE_NOW", None)
+        else:
+            os.environ["AGENT_WORKSPACE_NOW"] = self.saved_clock
+        super().tearDown()
+
+    def clock(self, day):
+        os.environ["AGENT_WORKSPACE_NOW"] = day
+
+    def section(self, name, body):
+        """Replace one section of the project's hand-off."""
+        text = self.handoff.read_text(encoding="utf-8")
+        pattern = r"(## %s\n\n).*?(?=\n## |\Z)" % re.escape(name)
+        self.assertTrue(re.search(pattern, text, re.S), name)
+        self.handoff.write_text(re.sub(pattern, lambda m: m.group(1) + body + "\n", text, count=1, flags=re.S), encoding="utf-8")
+
+    def found(self, rule):
+        return [finding for finding in self.check()[1]["findings"] if finding["rule"] == rule]
+
+    def routine(self, *argv):
+        return run("routine", *argv, "--home", self.home)
+
+    def runs(self):
+        log = self.home / "_workspace" / "runs.jsonl"
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.is_file() else []
+
+    # --- the clock, the rules ---
+
+    def test_the_test_clock_sets_today(self):
+        self.assertEqual(ws.today(), "2026-03-01")
+        self.assertIn("2026-03-01", self.handoff.read_text(encoding="utf-8"))
+
+    def test_a_new_workspace_has_the_order_for_what_wins(self):
+        rules = (self.home / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("**When files disagree, this order decides, and you say so.**", rules)
+        for phrase in ("`Conflict:`", "`D-001`", "due 2026-01-31", "**Read the status first, if there is one.**"):
+            self.assertIn(phrase, rules)
+        self.assertIn("D-001", (self.project() / "DECISIONS.md").read_text(encoding="utf-8"))
+
+    def test_upgrade_from_the_last_version_adds_the_four_new_rules(self):
+        settings = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        settings["skill_version"] = "0.3.0"
+        self.settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        rules_path = self.home / "AGENTS.md"
+        titles = [title for step in ws.UPGRADES if step["version"] == "0.4.0" for title in step["rules"]]
+        self.assertEqual(len(titles), 4)
+        kept = [line for line in rules_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if not any("**%s**" % title in line for title in titles)]
+        rules_path.write_text("".join(kept), encoding="utf-8")
+        old = rules_path.read_text(encoding="utf-8")
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        added = rules_path.read_text(encoding="utf-8")[len(old):]
+        self.assertEqual(added.count("<!-- agent-workspace-setup:rules-0.4.0 -->"), 1)
+        for title in titles:
+            self.assertIn("- **%s**" % title, added)
+        self.assertIn("Optional routines", output)
+        self.assertNotIn("VER001", self.rules())
+
+    # --- checks that read dates and numbers ---
+
+    def test_an_overdue_next_action_is_found_and_one_due_later_is_not(self):
+        self.section("Next actions", "1. Book the window installer, due 2026-03-04.\n2. Call the roofer by phone.")
+        self.assertEqual(self.found("HND013"), [])
+        row = [row for row in self.check()[1]["work"] if row["number"] == "91.01"][0]
+        self.assertEqual([(due["date"], due["days"]) for due in row["due"]], [("2026-03-04", 3)])
+        self.clock("2026-03-10")
+        hits = self.found("HND013")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["severity"], "warn")
+        self.assertIn("was due 2026-03-04", hits[0]["message"])
+
+    def test_open_conflicts_are_counted(self):
+        self.section("Don't forget", "- Conflict: the permit date. The city's letter says May, the contractor says June.\n"
+                                    "- **Conflict:** the budget. 40,000 in the quote, 45,000 in the email.\n"
+                                    "- No conflict here, only a reminder.")
+        hits = self.found("HND011")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("2 open conflicts", hits[0]["message"])
+
+    def test_a_hand_off_that_fell_behind_its_log_is_found(self):
+        self.clock("2026-03-25")
+        self.section("Session log", "- 2026-03-20 · a tool: ordered the windows. Delivery is expected on 2026-04-15.\n"
+                                    "- 2026-03-01 · a tool: created this folder.")
+        hits = self.found("HND012")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("runs to 2026-03-20", hits[0]["message"])
+        self.assertIn("stops at 2026-03-01", hits[0]["message"])
+        self.section("Current state", "- 2026-03-20: windows ordered.")
+        self.assertEqual(self.found("HND012"), [])
+
+    def test_a_long_wait_is_found(self):
+        self.section("Don't forget", "- Waiting on the bank since 2026-01-10 for the loan letter.")
+        hits = self.found("HND014")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("Waiting on the bank for 50 days", hits[0]["message"])
+
+    def test_citations_of_replaced_and_missing_decisions_are_found(self):
+        (self.project() / "DECISIONS.md").write_text(
+            "# Decisions: Duplex renovation\n\n## Entries\n\n"
+            "- **D-002 · 2026-02-20 · Switch contractor.** Use the second firm. *Why:* price. *Source:* Ana, chat.\n"
+            "- **D-001 · 2026-01-10 · Contractor.** Use the first firm. *Why:* it was free.\n"
+            "  (Superseded 2026-02-20)\n", encoding="utf-8")
+        self.section("Current state", "- 2026-03-01: the first firm starts next week (D-001).\n- The loan follows (D-007).")
+        self.assertEqual([finding["message"] for finding in self.found("DEC001")], ["It cites D-001, which is marked Superseded."])
+        self.assertIn("D-007", self.found("DEC002")[0]["message"])
+        self.section("Current state", "- 2026-03-01: the second firm starts next week (D-002).")
+        self.assertEqual(self.found("DEC001") + self.found("DEC002"), [])
+        with open(self.project() / "DECISIONS.md", "a", encoding="utf-8") as handle:
+            handle.write("- **D-002 · 2026-03-01 · Windows.** Wood frames.\n")
+        self.assertIn("used for two entries", self.found("DEC002")[0]["message"])
+
+    def test_a_purpose_that_differs_between_readme_and_hand_off_is_found(self):
+        self.assertEqual(self.found("FCT001"), [])
+        text = self.handoff.read_text(encoding="utf-8")
+        self.handoff.write_text(re.sub(r"\*\*Purpose:\*\* [^·]*·", "**Purpose:** Sell the duplex. ·", text, count=1), encoding="utf-8")
+        self.assertEqual(len(self.found("FCT001")), 1)
+
+    def test_an_old_open_note_is_found_until_it_is_answered(self):
+        notes = self.project() / "AGENT_SYNC.md"
+        base = notes.read_text(encoding="utf-8")
+        notes.write_text(base + "\n### 2026-01-05T09:00-08:00 · Codex → Claude · open\n\nWhich quote is current?\n", encoding="utf-8")
+        self.assertEqual(len(self.found("NOTE001")), 1)
+        with open(notes, "a", encoding="utf-8") as handle:
+            handle.write("\n### 2026-03-01T10:00-08:00 · Claude → Codex · FYI\n\nRe: 2026-01-05T09:00-08:00 The second one. done\n")
+        self.assertEqual(self.found("NOTE001"), [])
+
+    def test_closed_work_that_was_never_archived_and_old_inbox_items_are_found(self):
+        text = self.handoff.read_text(encoding="utf-8")
+        self.handoff.write_text(text.replace("**Status:** Active", "**Status:** Closed"), encoding="utf-8")
+        (self.home / "90_Inbox" / "scan.pdf").write_bytes(b"x")
+        self.assertEqual(self.found("STS001"), [])
+        self.clock("2026-04-15")
+        self.assertIn("Closed 45 days ago", self.found("STS001")[0]["message"])
+        self.clock("2030-01-01")
+        self.assertEqual(len(self.found("INB002")), 1)
+
+    # --- routines are optional ---
+
+    def test_nothing_about_routines_exists_until_the_owner_asks(self):
+        self.assertFalse(self.status.exists())
+        self.assertFalse((self.home / "_workspace" / "runs.jsonl").exists())
+        self.assertNotIn("routines", json.loads(self.settings_path.read_text(encoding="utf-8")))
+        self.assertEqual([rule for rule in self.rules() if rule.startswith("ROU")], [])
+
+    def test_the_offer_is_made_once_and_a_no_is_remembered(self):
+        code, output = run("check", "--home", self.home)
+        self.assertIn("Routines are optional", output)
+        self.assertIn("offer the daily check once", output)
+        code, output = self.routine("offer", "--answer", "later")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("Routines are optional", run("check", "--home", self.home)[1])
+        self.clock("2026-04-05")
+        self.assertIn("Routines are optional", run("check", "--home", self.home)[1])
+        self.routine("offer", "--answer", "no")
+        self.clock("2027-04-05")
+        self.assertNotIn("Routines are optional", run("check", "--home", self.home)[1])
+        self.assertNotIn("Routines are optional", run("check", "--brief", "--home", self.home)[1])
+
+    def test_plan_and_status_and_dry_runs_write_nothing(self):
+        before = manifest(self.tmp)
+        code, output = self.routine("plan", "--runner", "claude-desktop")
+        self.assertEqual(code, 0, output)
+        for phrase in ("Routines are optional", "until the owner says yes", "routine run --kind daily --runner claude-desktop",
+                       "Never move, delete or edit", "## Weekly review"):
+            self.assertIn(phrase, output)
+        for argv in (["status"], ["status", "--short"], ["run", "--kind", "daily", "--dry-run"],
+                     ["record", "--kind", "daily", "--runner", "os", "--dry-run"], ["offer", "--answer", "no", "--dry-run"]):
+            code, output = self.routine(*argv)
+            self.assertIn(code, (0, 10), (argv, output))
+        self.assertEqual(before, manifest(self.tmp))
+
+    def test_a_run_writes_only_the_status_file_and_its_own_records(self):
+        self.section("Next actions", "1. Book the window installer, due 2026-02-20.")
+        before = manifest(self.home)
+        code, output = self.routine("run", "--kind", "daily")
+        self.assertEqual(code, 10, output)
+        self.assertIn("Tell the owner what is under Needs you", output)
+        after = manifest(self.home)
+        changed = sorted(name for name in set(before) | set(after) if before.get(name) != after.get(name))
+        self.assertEqual(changed, ["STATUS.md", os.path.join("_workspace", "findings.json"), os.path.join("_workspace", "runs.jsonl")])
+        text = self.status.read_text(encoding="utf-8")
+        self.assertIn(ws.STATUS_MARK, text)
+        self.assertIn("## Needs you (1)", text)
+        self.assertIn("91.01 Duplex renovation", text)
+        self.assertNotIn("Private", text)
+        self.assertEqual(self.runs()[-1]["result"], "attention")
+
+    def test_a_run_is_quiet_when_nothing_is_new_and_speaks_again_at_seven_days(self):
+        self.section("Next actions", "1. Book the window installer, due 2026-02-20.")
+        self.routine("record", "--kind", "daily", "--runner", "os")
+        self.assertEqual(self.routine("run", "--kind", "daily", "--runner", "os")[0], 10)
+        self.clock("2026-03-02")
+        code, output = self.routine("run", "--kind", "daily", "--runner", "os")
+        self.assertEqual(code, 0, output)
+        self.assertIn("Nothing new needs the owner", output)
+        self.assertIn("Open 1 day.", self.status.read_text(encoding="utf-8"))
+        self.clock("2026-03-08")
+        self.assertEqual(self.routine("run", "--kind", "daily", "--runner", "os")[0], 10)
+
+    def test_a_second_run_in_the_same_day_and_a_standby_copy_both_exit(self):
+        self.routine("record", "--kind", "daily", "--runner", "claude-desktop", "--standby", "codex")
+        self.assertEqual(self.routine("run", "--kind", "daily", "--runner", "claude-desktop")[0], 0)
+        first = self.status.read_bytes()
+        code, output = self.routine("run", "--kind", "daily", "--runner", "claude-desktop")
+        self.assertEqual(code, 0)
+        self.assertIn("already ran", output)
+        self.clock("2026-03-02")
+        code, output = self.routine("run", "--kind", "daily", "--runner", "codex")
+        self.assertEqual(code, 0)
+        self.assertIn("standby", output)
+        self.assertEqual(self.status.read_bytes(), first)
+        self.assertEqual([entry.get("note") for entry in self.runs()], [None, "already ran", "standby"])
+        code, output = self.routine("switch", "--kind", "daily", "--to", "codex")
+        self.assertEqual(code, 0, output)
+        self.assertEqual(self.routine("run", "--kind", "daily", "--runner", "codex")[0], 0)
+        entry = json.loads(self.settings_path.read_text(encoding="utf-8"))["routines"][0]
+        self.assertEqual((entry["runner"], entry["standby"]), ("codex", ["claude-desktop"]))
+
+    def test_the_same_inputs_give_the_same_status_file(self):
+        self.section("Next actions", "1. Book the window installer, due 2026-03-02.")
+        self.routine("run", "--kind", "weekly", "--runner", "os")
+        first = self.status.read_text(encoding="utf-8")
+        self.assertIn("## Worth a tidy-up", first)
+        self.assertIn("## This month", first)
+        self.assertIn("**Due in 1 day:**", first)
+        self.routine("run", "--kind", "weekly", "--runner", "os", "--force")
+        second = self.status.read_text(encoding="utf-8")
+        self.assertEqual(first.replace("## This month (0)\n\n- Nothing to archive, and nothing unsettled for a month.\n\n", ""),
+                         second)
+
+    def test_an_owners_own_status_file_is_never_overwritten(self):
+        self.status.write_text("# My own status notes\n", encoding="utf-8")
+        code, output = self.routine("run", "--kind", "daily")
+        self.assertEqual(code, 1)
+        self.assertEqual(self.status.read_text(encoding="utf-8"), "# My own status notes\n")
+
+    def test_a_routine_that_stopped_overlapped_or_failed_is_flagged(self):
+        self.routine("record", "--kind", "daily", "--runner", "os")
+        self.routine("run", "--kind", "daily", "--runner", "os")
+        self.assertEqual([rule for rule in self.rules() if rule.startswith("ROU")], [])
+        self.clock("2026-03-06")
+        self.assertIn("last ran 5 days ago", self.found("ROU001")[0]["message"])
+        self.assertIn("Alarm", self.routine("status")[1])
+        self.routine("run", "--kind", "daily", "--runner", "os")
+        self.clock("2026-03-07")
+        self.assertEqual(self.found("ROU001"), [])
+        log = self.home / "_workspace" / "runs.jsonl"
+        ws.append_line(log, {"time": "2026-03-07T08:00-08:00", "kind": "daily", "runner": "os", "computer": "testbox",
+                             "period": "2026-03-07", "result": "ok"})
+        ws.append_line(log, {"time": "2026-03-07T08:05-08:00", "kind": "daily", "runner": "os", "computer": "laptop",
+                             "period": "2026-03-07", "result": "ok"})
+        self.assertEqual(len(self.found("ROU002")), 1)
+        ws.append_line(log, {"time": "2026-03-07T09:00-08:00", "kind": "daily", "runner": "os", "computer": "testbox",
+                             "period": "2026-03-07", "result": "error"})
+        self.assertEqual(len(self.found("ROU003")), 1)
+
+    def test_remove_takes_the_routine_out_and_keeps_the_files(self):
+        self.routine("record", "--kind", "daily", "--runner", "os")
+        self.routine("run", "--kind", "daily", "--runner", "os")
+        code, output = self.routine("remove", "--kind", "daily")
+        self.assertEqual(code, 0, output)
+        self.assertTrue(self.status.is_file())
+        self.assertEqual(json.loads(self.settings_path.read_text(encoding="utf-8"))["routines"], [])
+        self.clock("2026-06-01")
+        self.assertEqual([rule for rule in self.rules() if rule.startswith("ROU")], [])
+
+    def test_a_month_of_drift_and_missed_runs(self):
+        """Thirty days: a deadline arrives and passes, the routine misses four days, a conflict appears and ages."""
+        self.routine("record", "--kind", "daily", "--runner", "os")
+        owners_files = lambda: {name: digest for name, digest in manifest(self.home).items()
+                                if name != "STATUS.md" and not name.startswith("_workspace")}
+        codes, missed = {}, {12, 13, 14, 15}
+        kept = owners_files()
+        for day in range(1, 31):
+            self.clock("2026-03-%02d" % day)
+            if day == 3:
+                self.section("Next actions", "1. Book the window installer, due 2026-03-10.")
+                kept = owners_files()
+            if day == 20:
+                self.section("Don't forget", "- Conflict: the permit date. The letter says May, the contractor says June.")
+                kept = owners_files()
+            if day in missed:
+                continue
+            code, output = self.routine("run", "--kind", "daily", "--runner", "os")
+            codes[day] = code
+            self.assertEqual(owners_files(), kept, "day %d changed one of the owner's files" % day)
+            if day == 16:
+                self.assertIn("last ran 5 days ago", self.status.read_text(encoding="utf-8"))
+        self.assertEqual(codes[1], 0)            # nothing needs the owner yet
+        self.assertEqual(codes[6], 0)            # the deadline is still more than three days away
+        self.assertEqual(codes[7], 10)           # due in three days: said once
+        self.assertEqual(codes[8], 0)
+        self.assertEqual(codes[10], 10)          # due today
+        self.assertEqual(codes[11], 10)          # overdue, new
+        self.assertEqual(codes[16], 10)          # back after four missed days: the gap is news
+        self.assertEqual(codes[17], 0)
+        self.assertEqual(codes[18], 10)          # the overdue action has been open seven days
+        self.assertEqual(codes[20], 10)          # a conflict appeared
+        self.assertEqual(codes[21], 0)
+        self.assertEqual(codes[27], 10)          # the conflict has been open seven days
+        self.assertEqual(codes[30], 0)
+        good = [entry for entry in self.runs() if entry.get("result") in ("ok", "attention")]
+        self.assertEqual(len(good), 26)
+        self.assertEqual(len({entry["period"] for entry in good}), 26)
+        text = self.status.read_text(encoding="utf-8")
+        self.assertIn("1 next action overdue", text)
+        self.assertIn("1 open conflict between sources. Open 10 days.", text)
+
+
 class PackageTests(unittest.TestCase):
     """The skill's own text: what a host loads and what a person reads."""
 
@@ -1370,8 +1696,8 @@ class PackageTests(unittest.TestCase):
 
     def test_skill_md_stays_short(self):
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-        self.assertLess(len(text.encode("utf-8")), 13500)
-        self.assertLess(len(text.splitlines()), 140)
+        self.assertLess(len(text.encode("utf-8")), 15500)
+        self.assertLess(len(text.splitlines()), 155)
 
     def test_the_docs_name_the_current_version(self):
         modes = (SKILL_DIR / "references" / "modes.md").read_text(encoding="utf-8")

@@ -33,7 +33,7 @@ import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
@@ -43,6 +43,19 @@ MOVES_FILE = "moves.jsonl"
 FRICTION_FILE = "friction.md"
 # Closed work goes here, inside the group it belongs to.
 ARCHIVE_DIR = "_Archive"
+# Routines are optional. These exist only once the owner set one up and it has run.
+STATUS_FILE = "STATUS.md"
+RUNS_FILE = "runs.jsonl"
+FINDINGS_FILE = "findings.json"
+ROUTINE_KINDS = ("daily", "weekly")
+ROUTINE_GRACE = {"daily": 3, "weekly": 10}  # days without a good run before the check says so
+OFFER_AGAIN_DAYS = 30
+DUE_SOON_DAYS = 3
+WAIT_DAYS = 14
+NOTE_DAYS = 14
+INBOX_DAYS = 14
+LOG_AHEAD_DAYS = 7
+CLOSED_DAYS, PAUSED_DAYS = 30, 90
 # A workspace whose settings name no version was set up by the first release.
 FIRST_VERSION = "0.1.0"
 
@@ -74,6 +87,18 @@ UPGRADES = [
         ],
         "rules": ["Closed work goes into its own group's archive."],
         "note": "This replaces any older line in this file about one archive folder for the whole workspace.",
+    },
+    {
+        "version": "0.4.0",
+        "news": [
+            "A written order for what wins when two files disagree, and a `Conflict:` line for anything not settled yet.",
+            "The check now reads deadlines, waits, open conflicts and numbered decisions, and says when a hand-off "
+            "has fallen behind its own log.",
+            "Optional routines: a daily check that rewrites `%s` and speaks up only when something needs the owner. "
+            "Nothing is scheduled unless the owner asks for it." % STATUS_FILE,
+        ],
+        "rules": ["When files disagree, this order decides, and you say so.", "Dates the check can read.",
+                  "Number the decisions.", "Read the status first, if there is one."],
     },
 ]
 
@@ -147,7 +172,23 @@ class Out:
 
 
 def now():
+    fixed = os.environ.get("AGENT_WORKSPACE_NOW")  # a test clock: an ISO date, or a date and time
+    if fixed:
+        with contextlib.suppress(ValueError):
+            moment = dt.datetime.fromisoformat(fixed)
+            return (moment if moment.tzinfo else moment.astimezone()).replace(microsecond=0)
     return dt.datetime.now().astimezone().replace(microsecond=0)
+
+
+def as_date(text):
+    with contextlib.suppress(ValueError, TypeError):
+        return dt.date.fromisoformat(str(text)[:10])
+    return None
+
+
+def days_since(text):
+    day = as_date(text)
+    return None if day is None else (now().date() - day).days
 
 
 def iso(moment=None):
@@ -684,7 +725,7 @@ def resolve_location(home, recorded):
 # ----------------------------------------------------------------------------
 
 def parse_handoff(text):
-    info = {"title": None, "fields": {}, "headings": [], "next_action": None}
+    info = {"title": None, "fields": {}, "headings": [], "next_action": None, "sections": {}}
     for line in text.splitlines():
         match = re.match(r"#\s*Handoff:\s*(.+)", line)
         if match:
@@ -697,6 +738,8 @@ def parse_handoff(text):
         if match:
             info["fields"][name] = match.group(1).strip()
     info["headings"] = [m.group(1).strip() for m in re.finditer(r"^##[ \t]+(.+?)[ \t]*$", text, re.M)]
+    info["sections"] = {m.group(1).strip(): m.group(2)
+                        for m in re.finditer(r"^##[ \t]+(.+?)[ \t]*$(.*?)(?=^##[ \t]|\Z)", text, re.M | re.S)}
     section = re.search(r"^##[ \t]+Next actions[ \t]*$(.*?)(?=^##[ \t]|\Z)", text, re.M | re.S)
     if section:
         first = (re.search(r"^[ \t]*1[.)][ \t]+(.+)$", section.group(1), re.M)
@@ -704,6 +747,30 @@ def parse_handoff(text):
         if first:
             info["next_action"] = first.group(1).strip()
     return info
+
+
+def parse_decisions(text):
+    """Numbered entries of a DECISIONS.md: {number: superseded?}, and the numbers used twice."""
+    entries, twice, current = {}, set(), None
+    for line in text.splitlines():
+        start = re.match(r"^[ \t]*[-*][ \t]+\*\*(D-\d{3,})\b", line)
+        if start:
+            current = start.group(1)
+            if current in entries:
+                twice.add(current)
+            entries.setdefault(current, False)
+        elif line.startswith("#") or re.match(r"^[ \t]*[-*][ \t]+\*\*", line):
+            current = None
+        if current and "superseded" in line.lower():
+            entries[current] = True
+    return entries, twice
+
+
+def open_notes(text):
+    """Notes in an AGENT_SYNC.md that are still open, unanswered and old."""
+    heads = re.findall(r"(?im)^###[ \t]+(\S+)[ \t]+·.*·[ \t]*open[ \t]*$", text)
+    answered = set(re.findall(r"(?im)^[ \t]*Re:[ \t]*(\S+)", text))
+    return [stamp for stamp in heads if stamp not in answered and (days_since(stamp) or 0) > NOTE_DAYS]
 
 
 def no_next_action(text):
@@ -1287,7 +1354,8 @@ def cmd_setup(args):
     out.say("Check: %d error%s." % (errors, "" if errors == 1 else "s"))
     return out.finish(
         "Tell the owner what was created and where. Then open the first work folder's %s, "
-        "ask for the goal and the first task, and write them into it." % home.handoff
+        "ask for the goal and the first task, and write them into it. After that, offer the optional "
+        "daily check once: routine plan shows what it would do." % home.handoff
     )
 
 
@@ -1455,6 +1523,15 @@ RULES = {
     "HND008": ("info", "A hand-off longer than some tools read"),
     "HND009": ("info", "Active or ongoing work with no next action"),
     "HND010": ("info", "Hand-off lines still marked Unconfirmed"),
+    "HND011": ("warn", "Open conflicts between two sources"),
+    "HND012": ("info", "Current state is behind the Session log"),
+    "HND013": ("warn", "A next action is overdue"),
+    "HND014": ("info", "Waiting on someone for a long time"),
+    "DEC001": ("warn", "A superseded decision is still cited"),
+    "DEC002": ("warn", "A cited decision is missing, or a number is used twice"),
+    "FCT001": ("info", "README and hand-off give different purposes"),
+    "NOTE001": ("info", "An open note between agents is old"),
+    "STS001": ("info", "Closed or paused work that could be archived"),
     "MAP001": ("warn", "A work folder is missing from the map"),
     "MAP002": ("warn", "The map table was edited by hand, or its markers are unclear"),
     "MAP003": ("info", "The map is out of date"),
@@ -1463,8 +1540,12 @@ RULES = {
     "DOC002": ("info", "A document location that isn't on this computer"),
     "SYNC001": ("warn", "A sync conflict copy"),
     "INB001": ("info", "Items waiting in the Inbox"),
+    "INB002": ("info", "Inbox items that have waited a long time"),
     "MOV001": ("warn", "A move that didn't finish"),
     "ARC001": ("info", "Folders in the old archive for the whole workspace"),
+    "ROU001": ("warn", "A routine has stopped running"),
+    "ROU002": ("warn", "Two runners ran the same routine"),
+    "ROU003": ("warn", "The last routine run ended in an error"),
     "VER001": ("info", "The workspace was set up with an older version of the skill"),
     "VER002": ("info", "This copy of the skill is older than the workspace"),
     "FRC001": ("info", "Friction notes are waiting"),
@@ -1548,7 +1629,7 @@ def run_check(home):
     rows = []
     for item in sorted(state.numbered(), key=lambda it: it["number"]):
         handoff_path = item["path"] / home.handoff
-        row = {"number": item["number"], "path": item["rel"], "status": "", "last_updated": "",
+        row = {"number": item["number"], "path": item["rel"], "status": "", "last_updated": "", "due": [],
                "next_action": "", "archived": item["archived"], "title": item["name"].replace("-", " ")}
         rows.append(row)
         if not handoff_path.is_file():
@@ -1594,10 +1675,16 @@ def run_check(home):
                 with contextlib.suppress(ValueError):
                     stamp = dt.datetime.strptime(match.group(1), "%Y-%m-%d")
         if stamp is not None and not item["archived"]:
-            age = (dt.datetime.now() - stamp).days
+            age = (now().replace(tzinfo=None) - stamp).days
             if status.lower().startswith("active") and age > stale_days:
                 add("HND006", rel, "Active, and the hand-off is %d days old." % age,
                     "Ask the owner whether the status or the next action changed.")
+            if status.lower().startswith("closed") and age > CLOSED_DAYS:
+                add("STS001", item["rel"], "Closed %d days ago and not archived." % age,
+                    "Ask the owner whether to archive it. Archive only on their word.")
+            elif status.lower().startswith("paused") and age > PAUSED_DAYS:
+                add("STS001", item["rel"], "Paused for %d days." % age,
+                    "Ask the owner whether it is still paused, or closed.")
             changed = 0
             cutoff = (stamp + dt.timedelta(days=1, hours=1)).timestamp()
             for current, folders, files in os.walk(str(item["path"]), followlinks=False):
@@ -1623,6 +1710,67 @@ def run_check(home):
             if unsure:
                 add("HND010", rel, "%d line%s marked Unconfirmed." % (unsure, "" if unsure == 1 else "s"),
                     "Ask the owner about each one, then replace the mark with the answer and where it came from.")
+            sections, day = info["sections"], now().date()
+            conflicts = [line for line in sections.get("Don't forget", "").splitlines()
+                         if re.match(r"^[ \t]*(?:[-*][ \t]+)?\**conflict\**[ \t]*:", line, re.I)]
+            if conflicts:
+                add("HND011", rel, "%d open conflict%s between sources." % (len(conflicts), "" if len(conflicts) == 1 else "s"),
+                    "Ask the owner to settle each one. Then record the decision and take the line out.")
+            logged = [as_date(found) for found in re.findall(r"(?m)^[ \t]*[-*][ \t]+(20\d{2}-\d{2}-\d{2})\b",
+                                                             sections.get("Session log", ""))]
+            stated = [as_date(found) for found in re.findall(r"\b(20\d{2}-\d{2}-\d{2})\b", sections.get("Current state", ""))]
+            logged = [found for found in logged if found and found <= day]
+            stated = [found for found in stated if found and found <= day]
+            if logged and stated and (max(logged) - max(stated)).days > LOG_AHEAD_DAYS:
+                add("HND012", rel, "The Session log runs to %s, and Current state stops at %s." % (max(logged), max(stated)),
+                    "Tidy up this hand-off: bring Current state up to date from the log, with the owner's OK.")
+            for line in sections.get("Next actions", "").splitlines():
+                due = re.search(r"(?i)\bdue[: \t]+(?:on[ \t]+|by[ \t]+)?(20\d{2}-\d{2}-\d{2})\b", line)
+                when = as_date(due.group(1)) if due else None
+                if when:
+                    row["due"].append({"date": when.isoformat(), "days": (when - day).days,
+                                       "text": re.sub(r"^[ \t]*(?:\d+[.)]|[-*])[ \t]+", "", line).strip()})
+            late = sorted(entry["date"] for entry in row["due"] if entry["days"] < 0)
+            if late:
+                add("HND013", rel, "%d next action%s overdue. The oldest was due %s." % (len(late), "" if len(late) == 1 else "s", late[0]),
+                    "Ask the owner: is it done, moved to a new date, or dropped? Then update Next actions.")
+            waits = []
+            for name in ("Current state", "Next actions", "Don't forget"):
+                for who, since in re.findall(r"(?i)\bwaiting on[ \t]+(.+?)[ \t]+since[ \t]+(20\d{2}-\d{2}-\d{2})\b",
+                                             sections.get(name, "")):
+                    if (days_since(since) or 0) > WAIT_DAYS:
+                        waits.append((days_since(since), who.strip(" *`")))
+            if waits:
+                add("HND014", rel, "Waiting on %s for %d days." % (max(waits)[1], max(waits)[0]),
+                    "Ask the owner whether to chase it, change the plan, or drop it.")
+            decisions_path, readme_path = item["path"] / "DECISIONS.md", item["path"] / "README.md"
+            readme_text = read_text(readme_path) if readme_path.is_file() else ""
+            if decisions_path.is_file():
+                entries, twice = parse_decisions(read_text(decisions_path))
+                for number in sorted(twice):
+                    add("DEC002", item["rel"] + "/DECISIONS.md", "%s is used for two entries." % number,
+                        "Give the newer entry the next free number, with the owner's OK.")
+                for name, body in ((home.handoff, text), ("README.md", readme_text)):
+                    cited = sorted(set(re.findall(r"\bD-\d{3,}\b", body)))
+                    for number in cited:
+                        if entries.get(number):
+                            add("DEC001", "%s/%s" % (item["rel"], name), "It cites %s, which is marked Superseded." % number,
+                                "Find the entry that replaced it and update this file, with the owner's OK.")
+                        elif number not in entries:
+                            add("DEC002", "%s/%s" % (item["rel"], name), "It cites %s, and DECISIONS.md has no entry with that number." % number,
+                                "Ask the owner what was decided, then record it or fix the citation.")
+            stated_purpose = re.search(r"(?m)^\*\*Purpose:\*\*[ \t]*(.+?)[ \t]*$", readme_text)
+            plain = lambda words: re.sub(r"[\W_]+", " ", words).strip().lower()
+            if stated_purpose and fields.get("Purpose") and plain(stated_purpose.group(1)) != plain(fields["Purpose"]):
+                add("FCT001", item["rel"], "README.md and the hand-off give different purposes.",
+                    "Ask the owner which is right. Make both say it, then run map.")
+            notes_path = item["path"] / "AGENT_SYNC.md"
+            if notes_path.is_file():
+                old_notes = open_notes(read_text(notes_path))
+                if old_notes:
+                    add("NOTE001", item["rel"] + "/AGENT_SYNC.md",
+                        "%d open note%s older than %d days." % (len(old_notes), "" if len(old_notes) == 1 else "s", NOTE_DAYS),
+                        "Answer each one with a new note that starts `Re: <its timestamp>`, or tell the owner it is still open.")
 
     readme = home.root / "README.md"
     if readme.is_file():
@@ -1699,6 +1847,14 @@ def run_check(home):
         if waiting:
             add("INB001", home.rel(inbox), "%d item%s waiting in the Inbox." % (len(waiting), "" if len(waiting) == 1 else "s"),
                 "Go through them with the owner.")
+            limit = now().timestamp() - INBOX_DAYS * 86400
+            old_items = 0
+            for child in waiting:
+                with contextlib.suppress(OSError):
+                    old_items += os.lstat(str(child)).st_mtime < limit
+            if old_items:
+                add("INB002", home.rel(inbox), "%d Inbox item%s older than %d days." % (old_items, "" if old_items == 1 else "s", INBOX_DAYS),
+                    "Go through them with the owner: file, or let the owner delete.")
 
     for move in moves:
         if move.get("state") == "pending":
@@ -1713,6 +1869,8 @@ def run_check(home):
             % (len(old_archive), "" if len(old_archive) == 1 else "s", ", ".join(item["number"] for item in old_archive[:12])),
             "They stay valid. With the owner's OK, run archive <number> --dry-run for each: it moves the folder into "
             "the archive of the group it came from.")
+
+    routine_findings(home, add)
 
     settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
     have, this = version_tuple(home.skill_version()), version_tuple(__version__)
@@ -1750,7 +1908,8 @@ def run_check(home):
 
 
 # Findings a brief puts under "Needs attention", besides every error.
-BRIEF_RULES = ("HND005", "HND006", "HND009", "WRK001", "VER001", "FRC001")
+BRIEF_RULES = ("HND005", "HND006", "HND009", "HND011", "HND013", "HND014", "WRK001", "VER001", "FRC001",
+               "ROU001", "ROU002", "ROU003")
 
 
 def brief_gaps(home, findings, rows):
@@ -1785,6 +1944,9 @@ def cmd_check(args):
         next_step = "Tell the owner what you found, most serious first, and ask what to fix."
     else:
         next_step = "Nothing to fix. Work on the next actions."
+    if not counts["error"] and not args.brief and offer_due(home):
+        next_step += (" Routines are optional and none is set up: offer the daily check once. "
+                      "routine plan shows what it would do.")
     if args.brief:
         next_step = ("Read the hand-off of every Active or Ongoing work folder, and of any folder under Needs attention. "
                      "Then brief the owner: due or overdue, blocked or waiting on them, out of date, "
@@ -2670,6 +2832,422 @@ def cmd_connect(args):
 
 
 # ----------------------------------------------------------------------------
+# routine: an optional scheduled check. Nothing here runs unless the owner set it up.
+# ----------------------------------------------------------------------------
+
+STATUS_MARK = "<!-- agent-workspace-setup:status -->"
+# Findings that go under "Needs you" in the status file. Errors always do.
+NEEDS_RULES = ("HND013", "HND011", "HND014", "HND009", "WRK001", "ROU001", "ROU002", "ROU003")
+TIDY_RULES = ("HND005", "HND006", "HND008", "HND009", "HND010", "HND012")
+AGE_MARKS = (7, 14, 30)
+
+
+def save_settings(home, change):
+    """Rewrite the settings record with one change. The file is this skill's own record."""
+    path = home.records / SETTINGS_FILE
+    recorded = json.loads(read_text(path))
+    change(recorded)
+    draft = path.with_name(SETTINGS_FILE + ".new")
+    with open(draft, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(recorded, indent=2, ensure_ascii=False) + "\n")
+    os.replace(str(draft), str(path))
+    home.settings.update(recorded)
+
+
+def routines(home):
+    return [entry for entry in home.settings.get("routines") or []
+            if isinstance(entry, dict) and entry.get("kind") in ROUTINE_KINDS and entry.get("active", True)]
+
+
+def routine_entry(home, kind):
+    for entry in routines(home):
+        if entry["kind"] == kind:
+            return entry
+    return None
+
+
+def read_runs(home):
+    path = home.records / RUNS_FILE
+    runs = []
+    if not path.is_file():
+        return runs
+    with contextlib.suppress(OSError, UnicodeError):
+        for line in read_text(path).splitlines():
+            with contextlib.suppress(ValueError):
+                record = json.loads(line)
+                if isinstance(record, dict) and record.get("kind"):
+                    runs.append(record)
+    return runs
+
+
+def good_runs(runs, kind):
+    return [run for run in runs if run.get("kind") == kind and run.get("result") in ("ok", "attention")]
+
+
+def period(kind, moment):
+    """One run per period: a day for the daily check, an ISO week for the weekly review."""
+    if kind == "weekly":
+        year, week, _ = moment.isocalendar()
+        return "%d-W%02d" % (year, week)
+    return moment.date().isoformat()
+
+
+def routine_findings(home, add):
+    """Alarms about the routines themselves: one that stopped, two that overlapped, one that failed."""
+    runs = read_runs(home)
+    log_rel = "%s/%s" % (RECORDS, RUNS_FILE)
+    grace_setting = home.settings.get("routine_grace_days")
+    for entry in routines(home):
+        kind = entry["kind"]
+        grace = ROUTINE_GRACE[kind]
+        if isinstance(grace_setting, dict) and isinstance(grace_setting.get(kind), int):
+            grace = grace_setting[kind]
+        good = good_runs(runs, kind)
+        idle = days_since(good[-1].get("time") if good else entry.get("created"))
+        if idle is not None and idle > grace:
+            add("ROU001", log_rel,
+                ("The %s routine last ran %d days ago." if good else "The %s routine has not run since it was set up %d days ago.")
+                % (kind, idle),
+                "Run routine status. Check that the scheduled job still exists and that its app is open, then tell the owner.")
+        recent = [run for run in good if (days_since(run.get("time")) or 0) <= 14]
+        who = {}
+        for run in recent:
+            who.setdefault(run.get("period"), set()).add("%s on %s" % (run.get("runner"), run.get("computer")))
+        doubled = sorted(when for when, runners in who.items() if when and len(runners) > 1)
+        if doubled:
+            add("ROU002", log_rel, "Two runners ran the %s routine for %s." % (kind, doubled[-1]),
+                "Only one runner may be active. Ask the owner which one, pause the other, then run routine switch if needed.")
+        attempts = [run for run in runs if run.get("kind") == kind and run.get("result") in ("ok", "attention", "error")]
+        if attempts and attempts[-1].get("result") == "error":
+            add("ROU003", log_rel, "The last %s run ended in an error." % kind,
+                "Run check and fix the errors it lists. The next run clears this.")
+
+
+def offer_due(home):
+    """True when the owner hasn't been offered routines, or said later long enough ago."""
+    if routines(home):
+        return False
+    offer = home.settings.get("routines_offer")
+    if not isinstance(offer, dict):
+        return True
+    if offer.get("answer") == "later":
+        waited = days_since(offer.get("date"))
+        return waited is None or waited >= OFFER_AGAIN_DAYS
+    return False
+
+
+def finding_key(finding):
+    return "%s|%s|%s" % (finding["rule"], finding["path"], re.sub(r"\d+", "#", finding["message"]))
+
+
+def label(rows, path):
+    """`91.01 Duplex renovation` for a path inside that work folder, else the path."""
+    for row in rows:
+        if path == row["path"] or path.startswith(row["path"] + "/"):
+            return "%s %s" % (row["number"], row["title"])
+    return "`%s`" % path
+
+
+def status_text(home, moment, kind, runner, findings, rows, ages, runs, monthly):
+    broken, late, soon, other, stale = [], [], [], [], []
+    for row in rows:
+        for due in row.get("due", []):
+            if 0 <= due["days"] <= DUE_SOON_DAYS:
+                when = "today" if due["days"] == 0 else "in %d day%s" % (due["days"], "" if due["days"] == 1 else "s")
+                soon.append("**Due %s:** %s %s. %s" % (when, row["number"], row["title"], due["text"]))
+    for finding in findings:
+        age = ages.get(finding_key(finding), 0)
+        aged = "" if age < 1 else " Open %d day%s." % (age, "" if age == 1 else "s")
+        line = "%s: %s%s" % (label(rows, finding["path"]), finding["message"], aged)
+        if finding["severity"] == "error":
+            broken.append("**Broken:** " + line)
+        elif finding["rule"] == "HND013":
+            late.append("**Overdue:** " + line)
+        elif finding["rule"] in NEEDS_RULES:
+            other.append(line)
+        else:
+            stale.append((-age, line))
+    needs = broken + late + soon + other  # the order a brief uses: broken, overdue, due, then the rest
+    stale = [line for _, line in sorted(stale)]
+    lines = ["# Workspace status", "", STATUS_MARK, "",
+             "**Checked:** %s by the %s routine (`%s` on `%s`)" % (iso(moment), kind, runner, host())]
+    last = []
+    for entry in routines(home):
+        good = good_runs(runs, entry["kind"])
+        last.append("%s last ran %s" % (entry["kind"], (good[-1].get("time") or "")[:10] if good else "never"))
+    if last:
+        lines.append("**Routines before this run:** " + " · ".join(last))
+
+    def section(title, items, empty):
+        lines.extend(["", "## %s (%d)" % (title, len(items)), ""])
+        lines.extend("- " + item for item in items[:12])
+        if len(items) > 12:
+            lines.append("- and %d more. Run check for all of them." % (len(items) - 12))
+        if not items:
+            lines.append("- " + empty)
+
+    section("Needs you", needs, "Nothing today.")
+    section("Getting stale", stale, "Nothing.")
+    if kind == "weekly":
+        tidy = sorted({label(rows, finding["path"]) for finding in findings if finding["rule"] in TIDY_RULES})
+        section("Worth a tidy-up", tidy, "Nothing.")
+        if monthly:
+            old = sorted({label(rows, finding["path"]) + ": " + finding["message"] for finding in findings
+                          if finding["rule"] == "STS001"
+                          or (finding["rule"] in ("HND010", "HND011") and ages.get(finding_key(finding), 0) >= 30)})
+            section("This month", old, "Nothing to archive, and nothing unsettled for a month.")
+    live = sum(1 for row in rows if not row["archived"])
+    lines.extend(["", "## The rest", "",
+                  "- %d work folder%s, %d archived." % (live, "" if live == 1 else "s", len(rows) - live), "",
+                  "Each run rewrites this file. Don't edit it. Say \"brief me\" for the detail."])
+    return "\n".join(lines) + "\n", needs
+
+
+def routine_run(args, home):
+    kind, runner = args.kind, slug(args.runner or "manual")
+    manual = runner == "manual"
+    moment, out = now(), Out()
+    base = {"time": iso(moment), "kind": kind, "runner": runner, "computer": host(), "period": period(kind, moment),
+            "version": __version__}
+    log_path = home.records / RUNS_FILE
+    entry = routine_entry(home, kind)
+    if entry and not manual and (entry.get("runner") != runner or entry.get("computer", host()) != host()):
+        out.say("The active runner for the %s routine is `%s` on `%s`. This copy is a standby, so it checked nothing."
+                % (kind, entry.get("runner"), entry.get("computer", host())))
+        if not args.dry_run:
+            with lock(home):
+                append_line(log_path, dict(base, result="skipped", note="standby"))
+        return out.finish("Say nothing to the owner. Only the active runner reports.")
+    runs = read_runs(home)
+    if not manual and not args.force and any(run.get("period") == base["period"] for run in good_runs(runs, kind)):
+        out.say("The %s routine already ran for %s. Nothing was checked again." % (kind, base["period"]))
+        if not args.dry_run:
+            with lock(home):
+                append_line(log_path, dict(base, result="skipped", note="already ran"))
+        return out.finish("Nothing to do. routine status shows the last result.")
+    target = home.root / STATUS_FILE
+    if target.exists() and STATUS_MARK not in read_text(target):
+        raise Refuse("`%s` in the workspace wasn't written by this skill, so it was left alone." % STATUS_FILE,
+                     "Ask the owner to rename that file. Then run the routine again.")
+
+    findings, rows = run_check(home)
+    seen_path = home.records / FINDINGS_FILE
+    known = {}
+    if seen_path.is_file():
+        with contextlib.suppress(OSError, ValueError):
+            loaded = json.loads(read_text(seen_path))
+            known = loaded if isinstance(loaded, dict) else {}
+    today_iso, current, ages, fresh = moment.date().isoformat(), {}, {}, []
+    watched = [(finding_key(finding), finding["rule"], finding["path"]) for finding in findings]
+    for row in rows:
+        for due in row.get("due", []):
+            if 0 <= due["days"] <= DUE_SOON_DAYS:
+                watched.append(("DUE|%s|%s" % (row["path"], due["date"]), "DUE", row["path"]))
+    for key, rule, path in watched:
+        first = (known.get(key) or {}).get("first_seen") or today_iso
+        current[key] = {"rule": rule, "path": path, "first_seen": first, "last_seen": today_iso}
+        ages[key] = max(0, (moment.date() - (as_date(first) or moment.date())).days)
+        if key not in known:
+            fresh.append(key)
+    monthly = kind == "weekly" and not any((run.get("time") or "")[:7] == today_iso[:7] for run in good_runs(runs, "weekly"))
+    text, needs = status_text(home, moment, kind, runner, findings, rows, ages, runs, monthly)
+    errors = sum(1 for finding in findings if finding["severity"] == "error")
+    needs_keys = [finding_key(finding) for finding in findings
+                  if finding["severity"] == "error" or finding["rule"] in NEEDS_RULES]
+    needs_keys += [key for key, rule, _ in watched if rule == "DUE"]
+    due_today = any(due["days"] == 0 for row in rows for due in row.get("due", []))
+    speak = errors or due_today or any(key in fresh or ages.get(key) in AGE_MARKS for key in needs_keys)
+    result = "error" if errors else ("attention" if speak else "ok")
+    record = dict(base, result=result, errors=errors, needs_you=len(needs),
+                  warnings=sum(1 for finding in findings if finding["severity"] == "warn"),
+                  info=sum(1 for finding in findings if finding["severity"] == "info"))
+
+    out.say("# %s routine%s" % (kind.capitalize(), " (dry run): nothing was written" if args.dry_run else ""))
+    out.say()
+    out.say("Result: %s. %d under Needs you, %d finding%s in all." % (result, len(needs), len(findings), "" if len(findings) == 1 else "s"))
+    if needs:
+        out.say()
+        for line in needs[:8]:
+            out.say("- " + line)
+    if not args.dry_run:
+        with lock(home):
+            for path, body in ((target, text), (seen_path, json.dumps(current, indent=1, ensure_ascii=False, sort_keys=True) + "\n")):
+                draft = path.with_name(path.name + ".new")
+                with open(draft, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(body)
+                os.replace(str(draft), str(path))
+            append_line(log_path, record)
+        out.say()
+        out.say("`%s` was rewritten." % STATUS_FILE)
+    code = 1 if errors else (10 if speak else 0)
+    if errors:
+        return out.finish("Tell the owner the workspace check found errors, and name them. Change nothing yourself.", code)
+    if speak:
+        return out.finish("Tell the owner what is under Needs you, in three lines or fewer. Change nothing yourself.", code)
+    return out.finish("Nothing new needs the owner. Say so in one line, or say nothing if this run is unattended.", code)
+
+
+def routine_status(args, home):
+    out, runs = Out(), read_runs(home)
+    active = routines(home)
+    target = home.root / STATUS_FILE
+    if args.short:
+        if not active and not target.is_file():
+            out.say("No routine is set up for this workspace.")
+            return out.finish("Nothing to report.")
+    out.say("# Routines")
+    out.say()
+    if not active:
+        out.say("None is set up. Routines are optional.")
+    for entry in active:
+        good = good_runs(runs, entry["kind"])
+        out.say("- %s: `%s` on `%s`%s. Last good run: %s." % (
+            entry["kind"], entry.get("runner"), entry.get("computer", "?"),
+            ", %s" % entry["at"] if entry.get("at") else "", (good[-1].get("time") or "?")[:16] if good else "never"))
+        if entry.get("standby"):
+            out.say("  Standby: %s." % ", ".join(entry["standby"]))
+    alarms = []
+    routine_findings(home, lambda rule, path, message, fix="": alarms.append("%s: %s" % (rule, message)))
+    for alarm in alarms:
+        out.say("- Alarm, " + alarm)
+    if target.is_file():
+        with contextlib.suppress(OSError, UnicodeError):
+            body = read_text(target)
+            checked = re.search(r"\*\*Checked:\*\* (\S+)", body)
+            count = re.search(r"^## Needs you \((\d+)\)", body, re.M)
+            old = days_since(checked.group(1)) if checked else None
+            out.say("- `%s`: checked %s, %s under Needs you%s." % (
+                STATUS_FILE, checked.group(1)[:16] if checked else "?", count.group(1) if count else "?",
+                "" if old is None or old <= 3 else ". That is %d days old" % old))
+    offer = home.settings.get("routines_offer")
+    if not active and isinstance(offer, dict):
+        out.say("- The owner was offered routines on %s and answered: %s." % (offer.get("date"), offer.get("answer")))
+    return out.finish("Tell the owner about any alarm, or about a status more than 3 days old. Otherwise carry on."
+                      if active or target.is_file() else
+                      ("Routines are optional. Offer the daily check once: routine plan shows it."
+                       if offer_due(home) else "Nothing to do."))
+
+
+def routine_plan(args, home):
+    out = Out()
+    shown = tilde(home.root)
+    session_only = shown.replace(os.sep, "/").startswith(SESSION_PATHS)
+    where = "the folder the owner connected" if session_only else "`%s`" % shown
+    runner = slug(args.runner or "<runner>")
+    out.say("# Routines: what could be set up (nothing was written)")
+    out.say()
+    out.say("Routines are optional. Nothing is scheduled until the owner says yes to each job, and each one can be removed.")
+    for entry in routines(home):
+        out.say("Already set up: the %s routine, run by `%s` on `%s`." % (entry["kind"], entry.get("runner"), entry.get("computer", "?")))
+    jobs = (("daily", "Daily check", "every day at 08:00",
+             "Runs the check, rewrites `%s` at the top of the workspace, and speaks up only when something needs the owner." % STATUS_FILE),
+            ("weekly", "Weekly review", "Mondays at 08:30",
+             "The same check, plus a list of work folders worth a tidy-up. The first run of a month adds archive candidates."))
+    for kind, title, when, what in jobs:
+        command = 'routine run --kind %s --runner %s%s' % (kind, runner, "" if session_only else ' --home "%s"' % shown)
+        out.say()
+        out.say("## %s" % title)
+        out.say()
+        out.say("- **What it does:** %s" % what)
+        out.say("- **What it never does:** move, delete or edit anything of the owner's. It writes `%s` and its own records in `%s/`."
+                % (STATUS_FILE, RECORDS))
+        out.say("- **When:** %s. The owner can pick another time." % when)
+        out.say("- **Folder for the task:** %s." % where)
+        out.say("- **The one command to pre-approve:** this skill's script with `%s`." % command)
+        out.say("- **Prompt for the scheduled task:**")
+        out.say()
+        out.say("```text")
+        out.say("Workspace %s. Use the agent-workspace-setup skill and run its script once with:" % title.lower())
+        out.say(command)
+        out.say("Do what its Next line says and nothing more. If nothing new needs me, reply in one line.")
+        out.say("Never move, delete or edit anything in the workspace. Run no other command.")
+        out.say("```")
+    out.say()
+    out.say("## After a job is created")
+    out.say()
+    out.say("Record it, so the check can tell when it stops: `routine record --kind daily --runner %s --at \"08:00\"`." % runner)
+    out.say("Then start one run and confirm that `%s` appeared." % STATUS_FILE)
+    return out.finish("Show this to the owner and ask which job they want, if any. Create a scheduled task only after their yes "
+                      "for that job. If they say no, or that nothing should be scheduled, run routine offer --answer no first, "
+                      "so that no later session asks again.")
+
+
+def routine_change(args, home):
+    action, out = args.action, Out()
+    today_iso = today()
+    if action == "offer":
+        if args.answer not in ("no", "later"):
+            raise Refuse("Give --answer no or --answer later.", "A yes is recorded by routine record once a job exists.")
+
+        def change(recorded):
+            recorded["routines_offer"] = {"answer": args.answer, "date": today_iso}
+        text = "The owner's answer to the offer of routines is recorded: %s." % args.answer
+        next_step = ("Don't offer routines again unless the owner asks." if args.answer == "no"
+                     else "Offer again after %d days, or when the owner asks." % OFFER_AGAIN_DAYS)
+    else:
+        if args.kind not in ROUTINE_KINDS:
+            raise Refuse("Give --kind daily or --kind weekly.", "Run the command again with one of those.")
+        current = routine_entry(home, args.kind)
+        if action == "record":
+            if not args.runner:
+                raise Refuse("Give --runner, the name of what runs the job, such as claude-desktop, cowork, codex or os.",
+                             "Run the command again with --runner.")
+            entry = {"kind": args.kind, "runner": slug(args.runner), "computer": host(), "active": True, "created": today_iso}
+            for key, value in (("at", args.at), ("task", args.task)):
+                if value:
+                    entry[key] = value
+            if args.standby:
+                entry["standby"] = [slug(name) for name in args.standby]
+            text = "The %s routine is recorded: run by `%s` on `%s`." % (args.kind, entry["runner"], entry["computer"])
+            next_step = ("Start one run now and confirm that `%s` appeared. Tell the owner how to remove the job." % STATUS_FILE)
+        elif current is None:
+            raise Refuse("No %s routine is recorded." % args.kind, "Run routine status to see what is set up.")
+        elif action == "switch":
+            if not args.to:
+                raise Refuse("Give --to, the runner that takes over.", "Run the command again with --to.")
+            standby = [name for name in current.get("standby", []) if name != slug(args.to)]
+            if current.get("runner") and current["runner"] != slug(args.to):
+                standby.append(current["runner"])
+            entry = dict(current, runner=slug(args.to), computer=host(), standby=standby)
+            text = "The %s routine's active runner becomes `%s` on `%s`. `%s` becomes a standby." % (
+                args.kind, entry["runner"], entry["computer"], current.get("runner"))
+            next_step = "Pause the old runner's job in its tool first, then enable the new one. Check after its next run."
+        else:  # remove
+            entry = None
+            text = "The %s routine is taken out of the workspace's records. `%s` and the run log stay." % (args.kind, STATUS_FILE)
+            next_step = "Tell the owner to delete or pause the scheduled job in the tool that ran it. This script can't."
+
+        def change(recorded):
+            kept = [item for item in recorded.get("routines") or []
+                    if not (isinstance(item, dict) and item.get("kind") == args.kind)]
+            if entry is not None:
+                kept.append(entry)
+                recorded["routines_offer"] = {"answer": "yes", "date": today_iso}
+            recorded["routines"] = kept
+    out.say(("(dry run): nothing was written. " if args.dry_run else "") + text)
+    if not args.dry_run:
+        with lock(home):
+            save_settings(home, change)
+            if action in ("switch", "remove"):
+                append_line(home.records / RUNS_FILE, {"time": iso(), "kind": args.kind, "result": action,
+                                                       "runner": slug(args.to) if action == "switch" else "", "computer": host()})
+    return out.finish(next_step if not args.dry_run else "Show this to the owner. When they approve, run it without --dry-run.")
+
+
+def cmd_routine(args):
+    home = open_home(args)
+    if args.action == "run":
+        if args.kind not in ROUTINE_KINDS:
+            raise Refuse("Give --kind daily or --kind weekly.", "Run the command again with one of those.")
+        return routine_run(args, home)
+    if args.action == "status":
+        return routine_status(args, home)
+    if args.action == "plan":
+        return routine_plan(args, home)
+    return routine_change(args, home)
+
+
+# ----------------------------------------------------------------------------
 # upgrade: bring a workspace that already exists up to this version of the skill
 # ----------------------------------------------------------------------------
 
@@ -2750,13 +3328,7 @@ def cmd_upgrade(args):
             gap = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") or not text else "\n\n")
             with open(rules_path, "a", encoding="utf-8", newline="\n") as handle:
                 handle.write(gap + "\n".join(sections))
-        settings_path = home.records / SETTINGS_FILE
-        recorded = json.loads(read_text(settings_path))
-        recorded["skill_version"] = this
-        draft = settings_path.with_name(SETTINGS_FILE + ".new")
-        with open(draft, "w", encoding="utf-8", newline="\n") as handle:
-            handle.write(json.dumps(recorded, indent=2, ensure_ascii=False) + "\n")
-        os.replace(str(draft), str(settings_path))
+        save_settings(home, lambda recorded: recorded.update(skill_version=this))
     return out.finish("Tell the owner what changed. Some tools read the rules only when they start, "
                       "so they should restart those tools.")
 
@@ -2853,6 +3425,18 @@ def build_parser():
 
     add("upgrade", cmd_upgrade, "After the skill was updated: say what's new, and add new rules to this workspace.",
         dry_run=True)
+
+    sub = add("routine", cmd_routine, "Optional scheduled check: plan, run, status, record, switch, remove, offer.", dry_run=True)
+    sub.add_argument("action", choices=["plan", "run", "status", "record", "switch", "remove", "offer"])
+    sub.add_argument("--kind", help="daily or weekly")
+    sub.add_argument("--runner", help="what runs the job: claude-desktop, cowork, codex, os, or manual")
+    sub.add_argument("--to", help="for switch: the runner that takes over")
+    sub.add_argument("--at", help="for record: when it runs, in the owner's words")
+    sub.add_argument("--task", help="for record: the scheduled task's name in its tool")
+    sub.add_argument("--standby", action="append", help="for record: a paused copy in another tool")
+    sub.add_argument("--answer", help="for offer: no or later")
+    sub.add_argument("--force", action="store_true", help="for run: run again in the same day or week")
+    sub.add_argument("--short", action="store_true", help="for status: a few lines for the start of a session")
     return parser
 
 

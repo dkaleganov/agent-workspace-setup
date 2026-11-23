@@ -79,6 +79,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | `README.md` | the AI home | The map. The skill keeps its tables current; your own notes go outside them |
 | `_workspace/` | the AI home | The skill's records: settings, the number ledger, the moves log. Not for editing by hand |
 | `_workspace/friction.md` | the AI home | One line from an agent each time a command of the skill tripped it. Yours to read, pass on and empty |
+| `STATUS.md` | the AI home | Only with a routine: what needs you today. Rewritten by every run |
 | `AGENTS.md` | each group | Three lines that send an agent to the rules and the map |
 | `CLAUDE.md` | each group and work folder | One line that makes Claude load the `AGENTS.md` beside it |
 | `README.md` | each work folder | What the work is and how the folder is organized. It changes only when the goal changes |
@@ -111,7 +112,7 @@ Keep it short. Past about 20 KB, some tools stop reading. Copy older Session log
 
 **Decisions** (`DECISIONS.md`): starts `# Decisions: <name>`, then one entry per decision, newest first.
 
-`- **YYYY-MM-DD · <title>.** <Decision>. *Why:* <reason>. *Source:* <who and where>.`
+`- **D-001 · YYYY-MM-DD · <title>.** <Decision>. *Why:* <reason>. *Source:* <who and where>.`
 
 Only your decisions go here. When one changes, add a new entry and mark the old one `(Superseded YYYY-MM-DD)`.
 
@@ -123,6 +124,27 @@ Only your decisions go here. When one changes, add a new entry and mark the old 
 - **Two sources that disagree are both written down,** and the conflict goes under Don't forget until you settle it.
 - **What couldn't be checked is marked `Unconfirmed`.** The check counts those lines, and a brief lists them.
 - **A brief says what it didn't cover:** private folders, documents that aren't on this computer, hand-offs it didn't read, and everything outside the workspace, such as mail and chat.
+
+## When files disagree
+
+Two files will disagree sooner or later. The rules give every agent the same order:
+
+1. What you tell it now.
+2. `DECISIONS.md`: the newest entry that isn't marked Superseded.
+3. `HANDOFF.md`: Current state and Next actions. Inside it, the line with the newer date.
+4. `README.md`.
+5. Notes, drafts and other files.
+
+- **An original document outranks a summary of it.** If a contract says one number and a hand-off another, the contract is right about what it says.
+- **An agent never settles a conflict quietly.** It works from the winner, writes a line that starts `Conflict:` with both values and where each came from, and asks you. Your answer becomes a decision.
+- **Decisions carry numbers,** such as `D-004`, so a file can cite one and the check can tell when it was replaced.
+
+## Routines are optional
+
+- **A routine runs the check on a schedule.** It rewrites `STATUS.md` at the top of the home and speaks up only when something needs you.
+- **You decide.** The skill offers it once. Nothing is scheduled without your yes, and a no is written down so no later session asks again.
+- **A run only reads and reports.** It never moves, deletes or edits your files.
+- **Its limits are real.** Every scheduler that can see your folder needs its app open and your computer awake. A check can't find a wrong fact that is written the same way everywhere, or anything that was never written down.
 
 ## Private folders
 

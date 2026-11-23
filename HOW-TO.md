@@ -17,7 +17,7 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.3.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.4.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
@@ -47,7 +47,7 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.3.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.4.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
@@ -76,7 +76,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.3.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.4.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -122,6 +122,7 @@ Not tested in this version. The skill is built to work like this:
 | "Restore the fence project." | It comes back out of the archive, into the same group |
 | "Undo that." | The last rename, move or archive is reversed |
 | "Check my workspace." | A read-only check, with a fix for each finding |
+| "Set up a daily check." | Optional. You see the exact job first, and nothing is scheduled without your yes |
 | "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. You see the before and after first |
 | "Upgrade my workspace." | After you update the skill: what's new, and the new rules for your workspace, after a preview |
 | "What is this file for?" | A plain answer |
@@ -136,6 +137,22 @@ The project names here are made up.
 - **Let the skill give out numbers.** Never number a folder by hand.
 - **Keep documents where they are.** Contracts, statements and photos stay in your own folders. Tell the agent where they live, and it reads them from there.
 - **Ask where a number came from.** Agents write a fact down with its source and date. What they couldn't check is marked `Unconfirmed`, and a brief lists those lines.
+
+## A daily check, if you want one
+
+It is optional. The skill offers it once, and a no is remembered.
+
+1. Say: "Set up a daily check."
+2. Read the preview: what runs, when, and the one command the task may use.
+3. Say yes to the job you want. The agent creates a scheduled task in the tool you are using, runs it once, and shows you `STATUS.md`.
+
+Good to know:
+
+- **It only reads and reports.** It never moves, deletes or edits your files.
+- **The first run may wait for you.** It asks before it runs the one command. Open the run in the Scheduled list, approve it, and choose to always allow it, so later runs don't wait.
+- **The app has to be open and the computer awake** for a scheduled task to run. In Claude Code on the desktop, a missed run is made up once.
+- **Write deadlines so the check can read them:** "Book the installer, due 2026-03-04". The same goes for "Waiting on the bank since 2026-03-04".
+- **To stop it:** say "remove my routines", then delete or pause the task in the tool's Scheduled list.
 
 ## When you update the skill
 

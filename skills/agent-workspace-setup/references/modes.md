@@ -104,6 +104,15 @@ Each group keeps its own archive, so closed work stays beside the work it belong
 | HND008 | info | The hand-off is over 20 KB | Copy older log lines to a file beside it, link it, then shorten the log with the owner's OK |
 | HND009 | info | Active or ongoing work whose Next actions names nothing to do | Ask the owner what comes next, or whether the work is now Paused or Closed |
 | HND010 | info | Hand-off lines still marked Unconfirmed | Ask the owner about each one, then replace the mark with the answer and its source |
+| HND011 | warn | Lines under Don't forget that start `Conflict:` | Ask the owner to settle each one, record the decision, take the line out |
+| HND012 | info | The Session log is more than 7 days ahead of Current state | Tidy up that hand-off |
+| HND013 | warn | A next action marked `due <date>` is overdue | Ask the owner: done, moved or dropped |
+| HND014 | info | `Waiting on <who> since <date>` for more than 14 days | Ask the owner whether to chase it, change the plan or drop it |
+| DEC001 | warn | A file cites a decision number that is marked Superseded | Update the file from the entry that replaced it, with the owner's OK |
+| DEC002 | warn | A cited decision number has no entry, or a number is used twice | Ask the owner what was decided, then record it or fix the number |
+| FCT001 | info | `README.md` and the hand-off give different purposes | Ask the owner which is right, make both say it, run `map` |
+| NOTE001 | info | An open note in `AGENT_SYNC.md` is unanswered after 14 days | Answer it with a `Re:` note, or tell the owner |
+| STS001 | info | Closed for over 30 days and not archived, or Paused for over 90 | Ask the owner whether to archive it |
 | MAP001 | warn | A work folder is missing from the map | `map` |
 | MAP002 | warn | A map table was edited by hand, or its markers are unclear | Fix it with the owner, then `map` |
 | MAP003 | info | A name, status or purpose changed since the map was written | `map` |
@@ -112,8 +121,12 @@ Each group keeps its own archive, so closed work stays beside the work it belong
 | DOC002 | info | A document location that isn't on this computer | Nothing. A task that needs it must stop and say so |
 | SYNC001 | warn | A sync conflict copy of a managed file | Compare both with the owner. Don't pick by date alone |
 | INB001 | info | Items waiting in the Inbox | Go through them with the owner |
+| INB002 | info | Inbox items older than 14 days | Go through them with the owner |
 | MOV001 | warn | A move that didn't finish | The next command that changes the workspace settles it |
 | ARC001 | info | Folders in the old archive for the whole workspace | They stay valid. With the owner's OK, `archive <number>` moves one into the archive of its own group |
+| ROU001 | warn | A routine the owner set up has stopped running | `routine status`, then check the scheduled job and its app |
+| ROU002 | warn | Two runners ran the same routine in one day or week | One runner only. Pause the other |
+| ROU003 | warn | The last routine run ended in an error | Run `check` and fix what it lists |
 | VER001 | info | The workspace was set up with an older version of the skill | `upgrade --dry-run`, then for real after the OK |
 | VER002 | info | This copy of the skill is older than the one that last upgraded the workspace | The owner updates this copy. Leave the workspace's newer rules alone |
 | FRC001 | info | Friction notes from agents are waiting in `_workspace/friction.md` | Show them to the owner. They can pass them on, then empty the file |
@@ -147,6 +160,44 @@ A workspace remembers which version of the skill set it up. When the copy of the
 
 A rule the home's `AGENTS.md` already has is not added twice. To take a rule out again, the owner deletes that section by hand.
 
+## Routines
+
+**Optional.** A workspace has no schedule, no `STATUS.md` and no run log until the owner asks for a routine. Offer it once, in two lines, and record a no with `routine offer --answer no`.
+
+**What a run does.** `routine run --kind daily --runner <name>` runs the check, rewrites `STATUS.md` at the top of the home, records how long each finding has been open, and adds one line to `_workspace/runs.jsonl`. It reads the owner's files and edits none of them. The weekly kind adds a list of work folders worth a tidy-up, and its first run of a month adds archive candidates and anything unsettled for a month.
+
+**Quiet by default.** The exit code says whether to speak: 0 nothing new, 10 something needs the owner, 1 the check found errors. Something "needs the owner" when it is new, due today, or has been open 7, 14 or 30 days. Follow the Next line.
+
+**Setting one up**
+
+1. `routine plan --runner <this tool>` prints each job: what it does, when, the folder, the prompt for the scheduled task and the one command to pre-approve. It writes nothing.
+2. Show it. The owner picks the daily check, the weekly review, both or neither.
+3. Create the scheduled task in this tool with the printed prompt, in the workspace folder. Ask for the script's `routine run` command to be allowed ahead of time. Never ask for a mode that skips permission checks.
+4. `routine record --kind daily --runner <name> --at "<when>"`. Add `--standby <name>` for a paused copy in a second tool.
+5. `routine run --kind daily --runner <name>` once, now. If `STATUS.md` doesn't appear, the job can't reach the folder: say so, and fix that before trusting the schedule.
+6. Tell the owner that the first scheduled run may pause to ask before it runs the command. They approve it once in that run, and choose to always allow it for this task.
+
+**One active runner.** The settings name the runner for each job. A copy with another name that fires by mistake logs "skipped" and writes nothing else, so a paused standby in a second tool is safe. A second run in the same day, or the same week for the weekly review, also exits. `routine switch --kind daily --to <name>` hands the job over: pause the old one first.
+
+**When a routine stops.** Every run logs a line. `check` says when a routine has had no good run for 3 days (daily) or 10 days (weekly), when two runners overlapped, and when the last run ended in an error.
+
+**What each tool can do,** from its documentation on 2026-11-23. Trust what you see over this table.
+
+| Runner | Needs |
+|---|---|
+| Claude Code desktop scheduled task | The app open and the computer awake. A missed run is made up once, if within 7 days. Tested once on macOS: the first run waited for the owner to approve the command |
+| Cowork scheduled task | A folder task marked to run on this computer, the app open and the computer awake. Not tested |
+| Codex scheduled task | The app running and the computer on. Not tested |
+| Cloud schedules of any tool | They can't reach a folder on the owner's computer. Don't use them for this |
+
+**What no check will catch.** Say this plainly when the owner asks how far to trust it:
+
+- A wrong fact written the same way everywhere.
+- Anything that was never written down.
+- A contradiction with a document nobody opened, or with anything in a private folder.
+- Two files that state one fact differently in prose. The script compares only what it can read exactly: dates, numbered decisions, the Purpose line, and lines that start `Conflict:`. Finding the rest is a job for a tidy-up, and that can miss things too.
+- A computer that is off.
+
 ## Upkeep: reconcile
 
 `reconcile` proposes; `reconcile --apply` does it. Always show the proposal first.
@@ -177,7 +228,7 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 1. Create the home folder, `_workspace/`, and the four group folders, numbered from the home's ten: +0 Inbox, +1 Projects, +2 Areas, +5 Data.
 2. Write `_workspace/settings.json`:
    ```json
-   {"version": 1, "skill_version": "0.3.0", "owner": "<name>", "home_number": 90, "separator": "_",
+   {"version": 1, "skill_version": "0.4.0", "owner": "<name>", "home_number": 90, "separator": "_",
     "handoff_file": "HANDOFF.md", "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
    ```
 3. For each file, copy the matching template from `assets/templates`, replace every `{{PLACEHOLDER}}`, and show it before writing it.
