@@ -68,3 +68,4 @@ Where each tool finds the skill and the workspace rules, and what to watch for. 
 - `install` never deletes. A different copy is replaced only with `--update`, and the old copy moves to a `skill-backups` folder beside the skills folder. A linked copy, or a folder that isn't this skill, is left alone.
 - `connect` backs the file up first, writes between its own markers, and `--remove` takes out that section and nothing else.
 - One workspace skill per tool. If a similar skill is installed, call this one by name.
+- **A tool whose home was moved.** Some apps start Claude Code or Codex with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` pointing at their own folder. `install` and `connect` then write there, and their preview says so in a note. Show the owner that note: a copy there serves only sessions started the same way. For the usual place, pass `--dest` with its skills folder.

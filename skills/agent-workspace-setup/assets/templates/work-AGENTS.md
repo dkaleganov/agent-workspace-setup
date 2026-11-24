@@ -1,6 +1,6 @@
 # Agent instructions: {{TITLE}}
 
-1. Read the workspace rules first: [../../AGENTS.md](../../AGENTS.md). They apply here and win on any conflict.
+1. Read the workspace rules first: [../../AGENTS.md](../../AGENTS.md). Open the file with your file-reading tool, not a shell command. They apply here and win on any conflict.
 2. Before any work, read `README.md`, then `{{HANDOFF}}`, `DECISIONS.md` and the open notes in `AGENT_SYNC.md`.
 3. After each finished task, add a dated line to `{{HANDOFF}}`: what changed, what's next.
 4. Record {{OWNER_FIRST}}'s decisions in `DECISIONS.md`, with the date and reason.

@@ -1643,6 +1643,796 @@ class TidyAndRoutineTests(Base):
         self.assertIn("1 open conflict between sources. Open 10 days.", text)
 
 
+class SmallBorrowTests(Base):
+    """Standard files stay single, and the log and the decisions keep their shape."""
+
+    def setUp(self):
+        super().setUp()
+        self.build()
+        self.handoff = self.project() / "HANDOFF.md"
+
+    def found(self, rule):
+        return [finding for finding in self.check()[1]["findings"] if finding["rule"] == rule]
+
+    def log(self, body):
+        text = self.handoff.read_text(encoding="utf-8")
+        self.handoff.write_text(text.split("## Session log")[0] + "## Session log\n\n" + body + "\n", encoding="utf-8")
+
+    def test_the_rules_say_standard_files_are_updated_in_place(self):
+        rules = (self.home / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("**Update the standard files in place.**", rules)
+        self.assertIn("`HANDOFF_v2.md`", rules)
+        self.assertIn("a new version of a deliverable as `_v2`", rules)
+        self.assertIn("**Names that sort, and lists that stay small.**", rules)
+
+    def test_a_second_copy_of_the_hand_off_is_an_error_the_brief_shows(self):
+        self.assertEqual(self.found("HND015") + self.found("WRK006"), [])
+        (self.project() / "HANDOFF-log.md").write_text("# Older log lines\n", encoding="utf-8")
+        (self.project() / "README-notes.md").write_text("# Notes\n", encoding="utf-8")
+        self.assertEqual(self.found("HND015") + self.found("WRK006"), [])
+        (self.project() / "HANDOFF_v2.md").write_text("# Handoff: Duplex renovation\n", encoding="utf-8")
+        (self.project() / "handoff copy.md").write_text("x\n", encoding="utf-8")
+        (self.project() / "DECISIONS_v2.md").write_text("x\n", encoding="utf-8")
+        hits = self.found("HND015")
+        self.assertEqual(sorted(finding["path"].rsplit("/", 1)[1] for finding in hits), ["HANDOFF_v2.md", "handoff copy.md"])
+        self.assertEqual(hits[0]["severity"], "error")
+        self.assertEqual([finding["path"].rsplit("/", 1)[1] for finding in self.found("WRK006")], ["DECISIONS_v2.md"])
+        code, output = run("check", "--brief", "--home", self.home)
+        self.assertEqual(code, 1)
+        self.assertIn("second copy of `HANDOFF.md`", output)
+
+    def test_session_log_lines_need_a_date_and_newest_first(self):
+        self.assertEqual(self.found("HND016"), [])
+        self.log("- 2026-03-02 · a tool: ordered the windows.\n- 2026-03-01 · a tool: created this folder.")
+        self.assertEqual(self.found("HND016"), [])
+        self.log("- ordered the windows.\n- 2026-03-01 · a tool: created this folder.")
+        self.assertIn("1 Session log line with no date", self.found("HND016")[0]["message"])
+        self.log("- 2026-03-01 · a tool: created this folder.\n- 2026-03-02 · a tool: ordered the windows.")
+        self.assertIn("isn't newest first", self.found("HND016")[0]["message"])
+
+    def test_decision_entries_need_a_number_or_a_date(self):
+        path = self.project() / "DECISIONS.md"
+        self.assertEqual(self.found("DEC003"), [])
+        base = path.read_text(encoding="utf-8").replace("- None yet.\n", "")
+        path.write_text(base + "- **D-002 · 2026-03-02 · Windows.** Wood frames. *Why:* looks. *Source:* Ana, chat.\n"
+                               "- **2026-01-10 · Contractor.** The first firm.\n", encoding="utf-8")
+        self.assertEqual(self.found("DEC003"), [])
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("- We should probably repaint the fence.\n")
+        hits = self.found("DEC003")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("1 entry not in the decision format", hits[0]["message"])
+
+    def test_upgrade_from_the_last_version_adds_the_two_new_rules(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["skill_version"] = "0.4.0"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        rules_path = self.home / "AGENTS.md"
+        titles = [title for step in ws.UPGRADES if step["version"] == "0.5.0" for title in step["rules"]]
+        kept = [line for line in rules_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                if not any("**%s**" % title in line for title in titles)]
+        rules_path.write_text("".join(kept), encoding="utf-8")
+        old = rules_path.read_text(encoding="utf-8")
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        added = rules_path.read_text(encoding="utf-8")[len(old):]
+        self.assertEqual(added.count("<!-- agent-workspace-setup:rules-0.5.0 -->"), 1)
+        for title in titles:
+            self.assertIn("- **%s**" % title, added)
+        self.assertNotIn("rules-0.4.0", added)
+
+    def test_the_skill_text_has_the_two_new_rules_for_agents(self):
+        text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        self.assertIn("never a guessed or placeholder path", text)
+        self.assertIn('"import skill"', text)
+
+
+class LayoutTests(Base):
+    """Optional help with the folders beside the home: folders only, by approved number, and nothing written there."""
+
+    CHANGES = [
+        {"create": "00_Inbox", "about": "Anything not sorted yet."},
+        {"rename": "Taxes 2025", "to": "30_Finance-Taxes", "about": "Returns, statements and receipts."},
+        {"create": "99_Archive", "about": "Things that are finished."},
+        {"move": "Old stuff", "into": "99_Archive"},
+        {"rename": "Client work/Acme", "to": "41_Acme"},
+        {"move": "loose.txt", "into": "00_Inbox"},
+    ]
+
+    def setUp(self):
+        super().setUp()
+        for folder in ("Taxes 2025/2024", "Old stuff", "Client work/Acme", "Private", "Photos Library", "Shared drives", "Documents"):
+            (self.drive / folder).mkdir(parents=True)
+        for name, body in (("Taxes 2025/return.pdf", "return"), ("Taxes 2025/2024/w2.pdf", "w2"), ("Old stuff/x.txt", "x"),
+                           ("Client work/Acme/notes.txt", "notes"), ("Private/secret.txt", "SECRET-CANARY"),
+                           ("Photos Library/p.jpg", "jpg"), ("loose.txt", "loose")):
+            (self.drive / name).write_text(body, encoding="utf-8")
+        self.build(private=["Private"], work=[{"title": "Taxes", "kind": "area", "documents": [str(self.drive / "Taxes 2025")]}])
+        self.settings_path = self.home / "_workspace" / "settings.json"
+
+    def outside(self):
+        """Every file and folder outside the AI home."""
+        files, folders = {}, set()
+        for current, names, found in os.walk(str(self.drive)):
+            names[:] = [name for name in names if os.path.join(current, name) != str(self.home)]
+            for name in names:
+                folders.add(os.path.relpath(os.path.join(current, name), str(self.drive)))
+            for name in found:
+                path = os.path.join(current, name)
+                with open(path, "rb") as handle:
+                    files[os.path.relpath(path, str(self.drive))] = hashlib.sha256(handle.read()).hexdigest()
+        return files, folders
+
+    def changes(self, changes=None, **extra):
+        path = self.tmp / "changes.json"
+        path.write_text(json.dumps(dict({"changes": self.CHANGES if changes is None else changes, "keep": ["Photos Library"]}, **extra)),
+                        encoding="utf-8")
+        return path
+
+    def settings(self):
+        return json.loads(self.settings_path.read_text(encoding="utf-8"))
+
+    def layout(self, *argv):
+        return run("layout", *argv, "--home", self.home)
+
+    def test_look_and_plan_change_nothing_and_never_list_private(self):
+        before = manifest(self.tmp)
+        code, look = self.layout("look", "--keep", "Photos Library")
+        self.assertEqual(code, 0, look)
+        self.assertIn("| `Private/` | private, not opened | | | |", look)
+        self.assertIn("| `Photos Library/` | kept as it is | | | |", look)
+        self.assertIn("| `90_AI-Agents/` | the AI home | | | |", look)
+        self.assertIn("| `Taxes 2025/` | not numbered | 2 |", look)
+        self.assertIn("## How the numbers work", look)
+        code, inside = self.layout("look", "--inside", "Client work")
+        self.assertEqual(code, 0, inside)
+        self.assertIn("| `Acme/` | not numbered | 1 |", inside)
+        code, plan = self.layout("plan", "--changes", self.changes())
+        self.assertEqual(code, 0, plan)
+        for index, line in enumerate(("Create `00_Inbox/`.", "Rename `Taxes 2025/`  →  `30_Finance-Taxes/`.", "Create `99_Archive/`.",
+                                      "Move `Old stuff/`  →  `99_Archive/Old stuff/`.",
+                                      "Rename `Client work/Acme/`  →  `Client work/41_Acme/`.",
+                                      "Move `loose.txt`  →  `00_Inbox/loose.txt`."), 1):
+            self.assertIn("%d. %s" % (index, line), plan)
+        self.assertIn("ask which numbers to do. Then stop.", plan)
+        for output in (look, inside, plan):
+            self.assertNotIn("secret", output)
+            self.assertNotIn("SECRET-CANARY", output)
+        code, output = self.layout("look", "--inside", "Private")
+        self.assertEqual(code, 1, output)
+        self.assertIn("is private", output)
+        os.remove(str(self.tmp / "changes.json"))
+        self.assertEqual(before, manifest(self.tmp))
+
+    def test_apply_does_only_the_approved_numbers_and_every_file_keeps_its_hash(self):
+        files, folders = self.outside()
+        home_before = manifest(self.home)
+        code, preview = self.layout("apply", "--changes", self.changes(), "--only", "1,2", "--dry-run")
+        self.assertEqual(code, 0, preview)
+        self.assertEqual((files, folders), self.outside())
+        self.assertEqual(home_before, manifest(self.home))
+        code, output = self.layout("apply", "--changes", self.changes(), "--only", "1,2")
+        self.assertEqual(code, 0, output)
+        self.assertIn("1. Done. Create `00_Inbox/`.", output)
+        self.assertIn("The settings now give the document folder `../Taxes 2025` as `../30_Finance-Taxes`.", output)
+        after, after_folders = self.outside()
+        self.assertEqual(sorted(after.values()), sorted(files.values()))       # every file is still there, unchanged
+        self.assertEqual(len(after), len(files))                               # and no file was added out there
+        self.assertEqual(after["30_Finance-Taxes/2024/w2.pdf".replace("/", os.sep)], files["Taxes 2025/2024/w2.pdf".replace("/", os.sep)])
+        self.assertEqual(after_folders - folders, {"00_Inbox", "30_Finance-Taxes", os.path.join("30_Finance-Taxes", "2024")})
+        self.assertTrue((self.drive / "Old stuff").is_dir())                   # number 4 was not approved
+        self.assertFalse((self.drive / "99_Archive").exists())                 # nor number 3
+        self.assertEqual(list((self.drive / "00_Inbox").iterdir()), [])        # a created folder is empty: no agent file
+        log = ws.read_layout(ws.Home(self.home))
+        self.assertEqual([(entry["op"], entry["state"]) for entry in log], [("create", "done"), ("rename", "done")])
+        recorded = self.settings()
+        self.assertEqual(recorded["documents"], ["../30_Finance-Taxes"])
+        self.assertEqual(recorded["layout"]["about"], {"00_Inbox": "Anything not sorted yet.",
+                                                       "30_Finance-Taxes": "Returns, statements and receipts."})
+        self.assertEqual(recorded["layout"]["keep"], ["Photos Library"])
+        readme = (self.home / "README.md").read_text(encoding="utf-8")
+        self.assertIn("## Your folders", readme)
+        self.assertIn("| `30_Finance-Taxes/` | Returns, statements and receipts. |", readme)
+        self.assertIn("| `Private/` | Private. |", readme)
+        self.assertIn("| `90_AI-Agents/` | This workspace. Agent files live only here. |", readme)
+        stale = [finding for finding in self.check()[1]["findings"] if finding["rule"] == "LAY001"]
+        self.assertEqual(sorted(finding["path"] for finding in stale),
+                         ["92_Areas/92.01_Taxes/HANDOFF.md", "92_Areas/92.01_Taxes/README.md", "AGENTS.md"])
+        self.assertIn("It is now `../30_Finance-Taxes`.", stale[0]["message"])
+        self.assertNotIn("MAP003", self.rules())
+        self.assertEqual(self.check()[1]["summary"]["error"], 0)
+
+    def test_undo_puts_a_rename_and_a_move_back(self):
+        files, folders = self.outside()
+        code, output = self.layout("apply", "--changes", self.changes(), "--only", "all")
+        self.assertEqual(code, 0, output)
+        moved, _ = self.outside()
+        self.assertEqual(sorted(moved.values()), sorted(files.values()))
+        self.assertTrue((self.drive / "00_Inbox" / "loose.txt").is_file())
+        self.assertTrue((self.drive / "Client work" / "41_Acme" / "notes.txt").is_file())
+        for expected in ("`00_Inbox/loose.txt`  →  `loose.txt`", "`Client work/41_Acme/`  →  `Client work/Acme/`",
+                         "`99_Archive/Old stuff/`  →  `Old stuff/`", "`30_Finance-Taxes/`  →  `Taxes 2025/`"):
+            before = self.outside()
+            code, preview = self.layout("undo", "--dry-run")
+            self.assertEqual(code, 0, preview)
+            self.assertIn(expected, preview)
+            self.assertEqual(before, self.outside())
+            code, output = self.layout("undo")
+            self.assertEqual(code, 0, output)
+        back, back_folders = self.outside()
+        self.assertEqual(back, files)
+        self.assertEqual(back_folders - folders, {"00_Inbox", "99_Archive"})    # created empty, and left for the owner
+        self.assertEqual(self.settings()["documents"], ["../Taxes 2025"])
+        self.assertNotIn("LAY001", self.rules())
+        code, output = self.layout("undo")
+        self.assertEqual(code, 0, output)
+        self.assertIn("no rename or move to undo", output)
+        # a place that is taken again is never overwritten
+        self.layout("apply", "--changes", self.changes([{"rename": "Old stuff", "to": "80_Old"}]), "--only", "1")
+        (self.drive / "Old stuff").mkdir()
+        code, output = self.layout("undo")
+        self.assertEqual(code, 1, output)
+        self.assertIn("`Old stuff` exists again.", output)
+        self.assertTrue((self.drive / "80_Old" / "x.txt").is_file())
+
+    def test_what_layout_refuses(self):
+        cases = [
+            ({"rename": "Private", "to": "70_Private"}, "`Private` is private"),
+            ({"move": "Old stuff", "into": "Private"}, "`Private` is private"),
+            ({"create": "Private/New"}, "is private"),
+            ({"rename": "Photos Library", "to": "50_Photos"}, "is on the keep list"),
+            ({"rename": "90_AI-Agents", "to": "80_AI"}, "is the AI home, or inside it"),
+            ({"move": "Old stuff", "into": "90_AI-Agents"}, "is the AI home, or inside it"),
+            ({"create": "90_AI-Agents/91_Projects/New"}, "more than two levels down"),
+            ({"rename": "Shared drives", "to": "20_Shared"}, "is part of how the synced drive is built"),
+            ({"rename": "Old stuff", "to": "90_Old"}, "would share the number 90 with `90_AI-Agents`"),
+            ({"rename": "Old stuff", "to": "Taxes 2025"}, "`Taxes 2025` already exists"),
+            ({"create": "Old stuff"}, "`Old stuff` already exists"),
+            ({"move": "Client work/Acme", "into": "Taxes 2025/2024"}, "more than two levels down"),
+            ({"move": "Old stuff", "into": "Nowhere"}, "`Nowhere` isn't a folder here"),
+            ({"rename": "Missing", "to": "10_Missing"}, "`Missing` isn't here"),
+            ({"create": "../escape"}, "isn't a plain path inside the work folder"),
+            ({"create": str(self.tmp / "elsewhere")}, "outside the work folder"),
+            ({"create": ".hidden"}, "hidden folders are left alone"),
+            ({"rename": "Old stuff", "to": "a/b"}, "`rename` needs `to`"),
+            ({"rename": "Old stuff", "to": "bad:name"}, "isn't a name every computer accepts"),
+            ({"move": "Old stuff", "into": "Old stuff"}, "can't move into itself"),
+            ({"create": "X", "rename": "Y"}, "exactly one of"),
+        ]
+        files, folders = self.outside()
+        home_before = manifest(self.home)
+        code, plan = self.layout("plan", "--changes", self.changes([case for case, _ in cases]))
+        self.assertEqual(code, 0, plan)
+        lines = {int(number): text for number, text in re.findall(r"^(\d+)\. (.+)$", plan, re.M)}
+        for index, (case, message) in enumerate(cases, 1):
+            self.assertTrue(lines[index].startswith("Not possible:"), lines[index])
+            self.assertIn(message, lines[index])
+        for only, message in (("", "needs --only"), ("0", "names one outside that"), ("99", "names one outside that"), ("one", "isn't a list of numbers")):
+            code, output = self.layout("apply", "--changes", self.changes(), *(["--only", only] if only else []))
+            self.assertEqual(code, 1, output)
+            self.assertIn(message, output)
+        # a number that can't be done stops the run, and the numbers after it are left
+        mixed = [{"create": "00_Inbox"}, {"rename": "Private", "to": "70_Private"}, {"rename": "Old stuff", "to": "80_Old"}]
+        code, output = self.layout("apply", "--changes", self.changes(mixed), "--only", "all")
+        self.assertEqual(code, 1, output)
+        self.assertIn("1. Done. Create `00_Inbox/`.", output)
+        self.assertIn("2. Not done: `Private` is private. The numbers after it were left too.", output)
+        after, after_folders = self.outside()
+        self.assertEqual(after, files)
+        self.assertEqual(after_folders - folders, {"00_Inbox"})
+        self.assertEqual((self.drive / "Private" / "secret.txt").read_text(encoding="utf-8"), "SECRET-CANARY")
+        changed = {path for path, digest in manifest(self.home).items() if home_before.get(path) != digest}
+        self.assertEqual(changed, {"README.md", os.path.join("_workspace", "settings.json"), os.path.join("_workspace", "layout.jsonl")})
+
+    def test_a_refusal_by_the_system_stops_cleanly(self):
+        # A sandbox that forbids changes outside the session's folder makes the rename fail. Nothing may be left half done.
+        files, folders = self.outside()
+        real_rename = os.rename
+
+        def refuse(source, target, *args, **kwargs):
+            if "Taxes 2025" in str(source) or "30_Finance-Taxes" in str(source):
+                raise PermissionError(1, "Operation not permitted")
+            return real_rename(source, target, *args, **kwargs)
+
+        os.rename = refuse
+        try:
+            code, output = self.layout("apply", "--changes", self.changes(), "--only", "1,2,3")
+        finally:
+            os.rename = real_rename
+        self.assertEqual(code, 1, output)
+        self.assertIn("1. Done. Create `00_Inbox/`.", output)
+        self.assertIn("2. Not done: the system refused it (Operation not permitted). The numbers after it were left too.", output)
+        self.assertIn("Never switch a sandbox or a permission check off yourself.", output)
+        self.assertNotIn("fault", output)
+        after, after_folders = self.outside()
+        self.assertEqual(after, files)
+        self.assertEqual(after_folders - folders, {"00_Inbox"})
+        self.assertEqual(self.settings()["documents"], ["../Taxes 2025"])
+        self.assertEqual([(entry["op"], entry["state"]) for entry in ws.read_layout(ws.Home(self.home))],
+                         [("create", "done"), ("rename", "abandoned")])
+        self.assertNotIn("LAY001", self.rules())
+        # the same change works once the system allows it, and an undo that is refused leaves both places alone
+        code, output = self.layout("apply", "--changes", self.changes(), "--only", "2")
+        self.assertEqual(code, 0, output)
+        os.rename = refuse
+        try:
+            code, output = self.layout("undo")
+        finally:
+            os.rename = real_rename
+        self.assertEqual(code, 1, output)
+        self.assertIn("The system refused the undo", output)
+        self.assertTrue((self.drive / "30_Finance-Taxes" / "return.pdf").is_file())
+
+    def test_a_link_is_never_moved(self):
+        try:
+            os.symlink(str(self.drive / "Old stuff"), str(self.drive / "Shortcut"))
+        except (OSError, NotImplementedError):
+            self.skipTest("this system doesn't allow links here")
+        code, plan = self.layout("plan", "--changes", self.changes([{"rename": "Shortcut", "to": "60_Shortcut"},
+                                                                    {"rename": "Documents", "to": "20_Documents"}]))
+        self.assertIn("`Shortcut` is a link. Links are never moved", plan)
+        self.assertIn("2. Rename `Documents/`  →  `20_Documents/`.", plan)  # an ordinary folder in a drive, whatever its name
+
+    def test_the_owners_home_folder_is_never_organized(self):
+        (self.fake_home / "Desktop").mkdir()
+        answers = self.tmp / "home.json"
+        answers.write_text(json.dumps({"location": str(self.fake_home), "owner": "Ana Lopez"}), encoding="utf-8")
+        code, output = run("setup", "--answers", answers)
+        self.assertEqual(code, 0, output)
+        before = manifest(self.fake_home)
+        for action in (["look"], ["plan", "--changes", self.changes([{"rename": "Desktop", "to": "10_Desktop"}])],
+                       ["apply", "--changes", self.tmp / "changes.json", "--only", "all"], ["undo"], ["keep", "Desktop"]):
+            code, output = run("layout", *action, "--home", self.fake_home / "90_AI-Agents")
+            self.assertEqual(code, 1, output)
+            self.assertIn("belong to the system and to apps", output)
+        self.assertEqual(before, manifest(self.fake_home))
+
+    def test_agent_files_outside_the_home_are_flagged_once_the_owner_uses_the_layout_help(self):
+        (self.drive / "Client work" / "AGENTS.md").write_text("rules\n", encoding="utf-8")
+        (self.drive / "Client work" / "Acme" / "HANDOFF.md").write_text("handoff\n", encoding="utf-8")
+        (self.drive / "Private" / "CLAUDE.md").write_text("x\n", encoding="utf-8")
+        self.assertNotIn("OUT001", self.rules())            # the folders beside the home aren't looked at unasked
+        code, look = self.layout("look")
+        self.assertIn("`Client work/AGENTS.md`", look)
+        self.assertNotIn("Private/CLAUDE.md", look)
+        before, _ = self.outside()
+        code, preview = self.layout("keep", "Photos Library", "--dry-run")
+        self.assertNotIn("layout", self.settings())
+        code, output = self.layout("keep", "Photos Library")
+        self.assertEqual(code, 0, output)
+        hits = sorted(finding["path"] for finding in self.check()[1]["findings"] if finding["rule"] == "OUT001")
+        self.assertEqual(hits, ["../Client work/AGENTS.md", "../Client work/Acme/HANDOFF.md"])
+        code, output = self.layout("keep", "Client work")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("OUT001", self.rules())
+        code, plan = self.layout("plan", "--changes", self.changes([{"rename": "Client work", "to": "40_Clients"}], keep=[]))
+        self.assertIn("is on the keep list", plan)
+        self.assertEqual(before, self.outside()[0])
+
+
+class RedirectedToolTests(Base):
+    """A wrapper app, or a second profile, can point a tool's home somewhere else. The owner is told."""
+
+    def test_install_and_connect_say_when_the_tools_home_was_moved(self):
+        self.build()
+        code, usual = run("install", "--tool", "claude", "--dry-run")
+        self.assertEqual(code, 0, usual)
+        self.assertNotIn("Note:", usual)
+        wrapper = self.tmp / "wrapper-app" / "claude-home"
+        wrapper.mkdir(parents=True)
+        os.environ["CLAUDE_CONFIG_DIR"] = str(wrapper)
+        os.environ["CODEX_HOME"] = str(self.tmp / "wrapper-app" / "codex-home")
+        before = manifest(self.tmp)
+        code, output = run("install", "--tool", "claude", "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertIn("claude-home/skills/agent-workspace-setup", output.replace(os.sep, "/"))
+        self.assertIn("Note: `CLAUDE_CONFIG_DIR` points Claude Code at", output)
+        self.assertIn("not the usual `~/.claude`", output)
+        self.assertIn("pass --dest with its skills folder", output)
+        self.assertIn("the note included", output)
+        code, output = run("connect", "--tool", "claude", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("Note: `CLAUDE_CONFIG_DIR` points Claude Code at", output)
+        code, output = run("install", "--tool", "codex", "--dry-run")
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("Note:", output)  # Codex skills sit in ~/.agents/skills wherever CODEX_HOME points
+        code, output = run("connect", "--tool", "codex", "--dry-run", "--home", self.home)
+        self.assertIn("Note: `CODEX_HOME` points Codex at", output)
+        self.assertEqual(before, manifest(self.tmp))
+
+
+class GroupTests(Base):
+    """Groups the owner names, each with one line on what goes there."""
+
+    OWN = [
+        {"name": "Clients", "about": "One folder for each client.", "work": "ongoing"},
+        {"name": "Campaigns", "about": "Launches and pushes that end.", "work": "finishes"},
+        {"name": "Library", "about": "Reference material agents read."},
+    ]
+    WORK = [{"title": "Acme", "group": "Clients"}, {"title": "Spring launch", "group": "92"}]
+
+    def settings(self):
+        return json.loads((self.home / "_workspace" / "settings.json").read_text(encoding="utf-8"))
+
+    def test_ours_stay_the_default(self):
+        self.build()
+        self.assertNotIn("groups", self.settings())
+        for name in ("90_Inbox", "91_Projects", "92_Areas", "95_Data"):
+            self.assertTrue((self.home / name).is_dir(), name)
+        readme = (self.home / "README.md").read_text(encoding="utf-8")
+        self.assertIn("Work that finishes.", readme)
+        rules = (self.home / "AGENTS.md").read_text(encoding="utf-8")
+        self.assertIn("The map in [README.md](README.md) lists the groups", rules)
+        self.assertNotIn("is for work that finishes", rules)
+
+    def test_the_owners_own_groups_are_built_with_their_lines(self):
+        answers = self.answers(groups=self.OWN, work=self.WORK)
+        before = manifest(self.tmp)
+        code, preview = run("setup", "--answers", answers, "--dry-run")
+        self.assertEqual(code, 0, preview)
+        self.assertEqual(before, manifest(self.tmp))
+        self.assertIn("91_Clients/  AGENTS.md, CLAUDE.md  (new)", preview)
+        self.assertIn("- `92_Campaigns/`: Launches and pushes that end.", preview)
+        self.assertIn("Every name above is a suggestion", preview)
+        self.build(groups=self.OWN, work=self.WORK)
+        self.assertEqual(sorted(p.name for p in self.home.iterdir() if p.is_dir() and p.name[0].isdigit()),
+                         ["90_Inbox", "91_Clients", "92_Campaigns", "93_Library"])
+        client, launch = self.home / "91_Clients" / "91.01_Acme", self.home / "92_Campaigns" / "92.01_Spring-launch"
+        self.assertIn("**Status:** Ongoing", (client / "HANDOFF.md").read_text(encoding="utf-8"))
+        self.assertIn("**Status:** Active", (launch / "HANDOFF.md").read_text(encoding="utf-8"))
+        for name in ("91_Clients", "92_Campaigns", "93_Library"):
+            self.assertTrue((self.home / name / "AGENTS.md").is_file(), name)
+        recorded = self.settings()["groups"]
+        self.assertEqual([(entry["number"], entry["name"]) for entry in recorded],
+                         [(90, "Inbox"), (91, "Clients"), (92, "Campaigns"), (93, "Library")])
+        self.assertEqual(recorded[3]["work"], "ongoing")
+        readme = (self.home / "README.md").read_text(encoding="utf-8")
+        self.assertIn("| [91_Clients](91_Clients/) | One folder for each client. |", readme)
+        self.assertIn("Anything not filed yet.", readme)
+        code, data = self.check()
+        self.assertEqual(data["summary"]["error"], 0, data)
+        # running setup again adds nothing and changes nothing
+        after = manifest(self.home)
+        self.build(groups=self.OWN, work=self.WORK)
+        self.assertEqual(after, manifest(self.home))
+
+    def test_the_folder_the_owner_named_is_not_taken_for_the_homes_name(self):
+        # A cheaper model once wrote the parent as `location` and the named folder as `home_name`.
+        answers = self.tmp / "wrong.json"
+        answers.write_text(json.dumps({"location": str(self.tmp), "home_name": "Drive", "owner": "Ana Lopez"}), encoding="utf-8")
+        before = manifest(self.tmp)
+        code, output = run("setup", "--answers", answers, "--dry-run")
+        self.assertEqual(code, 1, output)
+        self.assertIn("`location` already holds a folder called `Drive`", output)
+        self.assertIn("leave `home_name` out", output)
+        self.assertEqual(before, manifest(self.tmp))
+        code, preview = run("setup", "--answers", self.answers(), "--dry-run")
+        self.assertEqual(code, 0, preview)
+        self.assertIn("Where: inside `", preview)
+        self.assertIn("Drive`", preview.split("```")[0])
+
+    def test_bad_groups_are_refused_with_plain_reasons(self):
+        cases = [
+            ([{"name": "Clients"}], "Group `Clients` needs `about`"),
+            ([{"name": "A", "about": "x"}, {"name": "a", "about": "y"}], "listed twice"),
+            ([{"name": "G%d" % n, "about": "x"} for n in range(9)], "up to 8 groups besides the Inbox"),
+            ([{"name": "Clients", "about": "x", "work": "sometimes"}], "`work` must be finishes or ongoing"),
+            ([{"name": "Inbox", "about": "Drop things here."}], "no group besides the Inbox"),
+        ]
+        for groups, message in cases:
+            code, output = run("setup", "--answers", self.answers(groups=groups, work=[]), "--dry-run")
+            self.assertEqual(code, 1, output)
+            self.assertIn(message, output)
+            self.assertFalse(self.home.exists())
+        code, output = run("setup", "--answers", self.answers(groups=self.OWN, work=[{"title": "Acme"}]), "--dry-run")
+        self.assertEqual(code, 1, output)
+        self.assertIn("has no group for `project` work", output)
+        self.assertIn("`91_Clients`", output)
+
+    def test_a_group_named_like_ours_keeps_our_line_and_its_kind(self):
+        self.build(groups=[{"name": "Clients", "about": "One folder for each client."}, {"name": "Projects"}],
+                   work=[{"title": "Fence", "kind": "project"}])
+        self.assertTrue((self.home / "92_Projects" / "92.01_Fence").is_dir())
+        self.assertIn("| [92_Projects](92_Projects/) | Work that finishes. |", (self.home / "README.md").read_text(encoding="utf-8"))
+
+    def test_new_takes_a_group_by_name_or_number(self):
+        self.build(groups=self.OWN, work=self.WORK)
+        code, output = run("new", "--title", "Autumn sale", "--group", "campaigns", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "92_Campaigns" / "92.02_Autumn-sale").is_dir())
+        code, output = run("new", "--title", "Style guide", "--group", "93", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "93_Library" / "93.01_Style-guide").is_dir())
+        before = manifest(self.home)
+        for extra, message in ((["--kind", "project"], "has no group for `project` work"), (["--group", "Nope"], "`Nope` isn't a group here"),
+                               ([], "has no group for `project` work"), (["--group", "90"], "isn't a group here")):
+            code, output = run("new", "--title", "Other", "--home", self.home, *extra)
+            self.assertEqual(code, 1, output)
+            self.assertIn(message, output)
+            self.assertIn("`92_Campaigns`", output)
+        self.assertEqual(before, manifest(self.home))
+
+    def test_group_list_add_and_describe_on_an_older_workspace(self):
+        self.build()
+        before = manifest(self.home)
+        code, listing = run("group", "list", "--home", self.home)
+        self.assertEqual(code, 0, listing)
+        self.assertIn("| 91 | `91_Projects/` | Work that finishes. | finishes |", listing)
+        code, preview = run("group", "add", "--name", "Clients", "--about", "One folder for each client.", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, preview)
+        self.assertIn("`93_Clients/`  AGENTS.md, CLAUDE.md  (new)", preview)
+        self.assertEqual(before, manifest(self.home))
+        code, output = run("group", "add", "--name", "Clients", "--about", "One folder for each client.", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "93_Clients" / "AGENTS.md").is_file())
+        recorded = self.settings()["groups"]
+        self.assertEqual([entry["number"] for entry in recorded], [90, 91, 92, 93, 95])
+        self.assertEqual([entry.get("kind", "") for entry in recorded], ["", "project", "area", "", "data"])
+        self.assertIn("| [93_Clients](93_Clients/) | One folder for each client. |", (self.home / "README.md").read_text(encoding="utf-8"))
+        # nothing that was there changed, apart from the settings and the map
+        after = manifest(self.home)
+        changed = sorted(path for path in before if before[path] != after.get(path))
+        self.assertEqual(changed, ["README.md", os.path.join("_workspace", "settings.json")])
+        code, output = run("new", "--title", "Acme", "--group", "clients", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("**Status:** Ongoing", (self.home / "93_Clients" / "93.01_Acme" / "HANDOFF.md").read_text(encoding="utf-8"))
+        code, output = run("new", "--title", "Taxes", "--kind", "area", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "92_Areas" / "92.02_Taxes").is_dir())
+        code, output = run("move", "93.01", "--to", "Projects", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "91_Projects" / "93.01_Acme").is_dir())
+        code, output = run("group", "describe", "93", "--about", "Client work, one folder each.", "--work", "finishes", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("| [93_Clients](93_Clients/) | Client work, one folder each. |", (self.home / "README.md").read_text(encoding="utf-8"))
+        for argv, message in (
+            (["group", "add", "--name", "clients", "--about", "x"], "already a group named"),
+            (["group", "add", "--name", "Vendors"], "needs --name and --about"),
+            (["group", "describe", "Inbox", "--work", "finishes"], "doesn't apply"),
+            (["group", "describe", "97", "--about", "x"], "isn't a group here"),
+            (["group", "describe", "93"], "Nothing to change"),
+        ):
+            code, output = run(*argv, "--home", self.home)
+            self.assertEqual(code, 1, output)
+            self.assertIn(message, output)
+        self.assertEqual(self.check()[1]["summary"]["error"], 0)
+
+    def test_a_home_holds_eight_groups_besides_the_inbox(self):
+        self.build()
+        for index in range(5):
+            code, output = run("group", "add", "--name", "Extra %d" % index, "--about", "More work.", "--home", self.home)
+            self.assertEqual(code, 0, output)
+        numbers = sorted(int(p.name[:2]) for p in self.home.iterdir() if p.is_dir() and p.name[:2].isdigit())
+        self.assertEqual(numbers, [90, 91, 92, 93, 94, 95, 96, 97, 98])
+        code, output = run("group", "add", "--name", "One more", "--about", "x", "--home", self.home)
+        self.assertEqual(code, 1, output)
+        self.assertIn("already has 8 groups besides the Inbox", output)
+
+    def test_adopt_goes_into_a_named_group(self):
+        self.build(groups=self.OWN, work=self.WORK)
+        loose = self.home / "Loose notes"
+        loose.mkdir()
+        (loose / "notes.txt").write_text("x", encoding="utf-8")
+        code, output = run("adopt", "Loose notes", "--group", "Library", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        target = self.home / "93_Library" / "93.01_Loose-notes"
+        self.assertTrue((target / "notes.txt").is_file())
+        self.assertIn("**Status:** Ongoing", (target / "HANDOFF.md").read_text(encoding="utf-8"))
+        self.assertEqual(self.ledger()[-1]["kind"], "own")
+
+
+class ReviewTests(Base):
+    """Review by number, filing from the Inbox, snapshots, facts, versions and the brief file."""
+
+    def setUp(self):
+        super().setUp()
+        self.saved_clock = os.environ.get("AGENT_WORKSPACE_NOW")
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-03-01"
+        self.build()
+        self.handoff = self.project() / "HANDOFF.md"
+        self.inbox = self.home / "90_Inbox"
+
+    def tearDown(self):
+        if self.saved_clock is None:
+            os.environ.pop("AGENT_WORKSPACE_NOW", None)
+        else:
+            os.environ["AGENT_WORKSPACE_NOW"] = self.saved_clock
+        super().tearDown()
+
+    def found(self, rule):
+        return [finding for finding in self.check()[1]["findings"] if finding["rule"] == rule]
+
+    def moves(self):
+        return ws.read_moves(ws.Home(self.home))[0]
+
+    def test_review_numbers_the_proposals_and_writes_nothing(self):
+        code, output = run("review", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        (self.inbox / "scan.pdf").write_bytes(b"x")
+        (self.inbox / "Receipts").mkdir()
+        text = self.handoff.read_text(encoding="utf-8")
+        self.handoff.write_text(text.replace("**Status:** Active", "**Status:** Closed"), encoding="utf-8")
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-04-15"
+        before = manifest(self.home)
+        code, output = run("review", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.home))
+        numbered = re.findall(r"^(\d+)\. (.+)$", output, re.M)
+        self.assertEqual([int(number) for number, _ in numbered], list(range(1, len(numbered) + 1)))
+        lines = [line for _, line in numbered]
+        self.assertTrue(any(line.startswith("Archive 91.01") and "`archive 91.01 --dry-run`" in line for line in lines), output)
+        self.assertTrue(any("File `scan.pdf` from the Inbox." in line and 'file "scan.pdf" --to <number> --dry-run' in line for line in lines), output)
+        self.assertTrue(any("File `Receipts` from the Inbox." in line for line in lines), output)
+        self.assertTrue(all("**How:**" in line for line in lines), output)
+        self.assertIn("The owner approves by number.", output)
+        self.assertIn("ask which numbers to do. Then stop.", output)
+        self.assertNotIn("INB002", output)
+
+    def test_file_moves_an_inbox_item_and_undo_puts_it_back(self):
+        scan = self.inbox / "scan 1.pdf"
+        scan.write_bytes(b"pdf bytes")
+        digest = hashlib.sha256(b"pdf bytes").hexdigest()
+        ledger = self.ledger()
+        before = manifest(self.home)
+        code, output = run("file", "scan 1.pdf", "--to", "91.01", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("`90_Inbox/scan 1.pdf`  →  `91_Projects/91.01_Duplex-renovation/scan 1.pdf`", output)
+        self.assertEqual(before, manifest(self.home))
+        code, output = run("file", "90_Inbox/scan 1.pdf", "--to", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        moved = self.project() / "scan 1.pdf"
+        self.assertFalse(scan.exists())
+        self.assertEqual(hashlib.sha256(moved.read_bytes()).hexdigest(), digest)
+        self.assertEqual(self.moves()[-1]["state"], "done")
+        self.assertEqual(self.moves()[-1]["op"], "file")
+        self.assertEqual(self.ledger(), ledger)
+        code, output = run("undo", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue(scan.is_file())
+        self.assertFalse(moved.exists())
+        self.assertEqual(self.ledger(), ledger)
+        # a folder is filed whole, a work folder can be named in words, and an Inbox folder needs no number
+        (self.inbox / "Receipts").mkdir()
+        (self.inbox / "Receipts" / "a.txt").write_text("a", encoding="utf-8")
+        self.assertEqual(self.found("NUM005"), [])
+        self.assertIn("Work folders an Inbox item can go to: 91.01 Duplex renovation · 92.01 Bookkeeping.", run("review", "--home", self.home)[1])
+        code, output = run("file", "Receipts", "--to", "the bookkeeping area", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "92_Areas" / "92.01_Bookkeeping" / "Receipts" / "a.txt").is_file())
+        self.assertEqual(self.check()[1]["summary"]["error"], 0)
+
+    def test_file_refuses_what_it_should(self):
+        (self.inbox / "scan.pdf").write_bytes(b"new")
+        (self.project() / "scan.pdf").write_bytes(b"old")
+        (self.home / "outside.txt").write_text("x", encoding="utf-8")
+        before = manifest(self.home)
+        for argv, message in (
+            (["file", "scan.pdf", "--to", "91.01"], "already exists"),
+            (["file", "missing.pdf", "--to", "91.01"], "isn't an item directly in `90_Inbox/`"),
+            (["file", "../outside.txt", "--to", "91.01"], "isn't an item directly in `90_Inbox/`"),
+            (["file", "scan.pdf", "--to", "91.77"], "No folder has the number"),
+            (["file", "scan.pdf", "--to", "the garden shed"], "isn't a work folder number, or a name here"),
+        ):
+            code, output = run(*argv, "--home", self.home)
+            self.assertEqual(code, 1, output)
+            self.assertIn(message, output)
+        self.assertIn("Work folders here: 91.01 Duplex renovation, 92.01 Bookkeeping.", output)
+        self.assertEqual(before, manifest(self.home))
+        code, output = run("archive", "92.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        code, output = run("file", "scan.pdf", "--to", "92.01", "--home", self.home)
+        self.assertEqual(code, 1, output)
+        self.assertIn("is in the archive", output)
+        self.assertEqual((self.project() / "scan.pdf").read_bytes(), b"old")
+
+    def test_snapshot_keeps_the_hand_off_as_it_is(self):
+        rules = self.rules()
+        before = manifest(self.home)
+        code, output = run("snapshot", "91.01", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(before, manifest(self.home))
+        code, output = run("snapshot", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        code, output = run("snapshot", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        copies = sorted((self.home / "_workspace" / "snapshots" / "91.01").iterdir())
+        self.assertEqual([path.name for path in copies], ["20260301-000000-2-HANDOFF.md", "20260301-000000-HANDOFF.md"])
+        for path in copies:
+            self.assertEqual(path.read_bytes(), self.handoff.read_bytes())
+        after = manifest(self.home)
+        self.assertEqual({path for path in after if after[path] != before.get(path) and not path.startswith(os.path.join("_workspace", "snapshots"))}, set())
+        self.assertEqual(self.rules(), rules)
+        code, output = run("snapshot", "91.77", "--home", self.home)
+        self.assertEqual(code, 1, output)
+
+    def test_facts_need_a_source_and_a_date(self):
+        self.assertEqual(self.found("FCT002"), [])
+        (self.project() / "FACTS.md").write_text(
+            "# Facts: Duplex renovation\n\n- The lot is 5,000 square feet (county record, 2026-01-05)\n"
+            "- The roof's age isn't known. Unconfirmed\n- None yet.\n", encoding="utf-8")
+        self.assertEqual(self.found("FCT002"), [])
+        with open(self.project() / "FACTS.md", "a", encoding="utf-8") as handle:
+            handle.write("- The contractor's office is on Pine Street\n- Budget is 40,000 (Ana)\n")
+        hits = self.found("FCT002")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("2 facts with no source and date", hits[0]["message"])
+        self.assertTrue(hits[0]["path"].endswith("91.01_Duplex-renovation/FACTS.md"))
+
+    def test_three_versions_of_one_file_are_listed(self):
+        for name in ("Plan_v1.docx", "Plan_v2.docx", "Budget v1.xlsx"):
+            (self.project() / name).write_bytes(b"x")
+        self.assertEqual(self.found("FIL001"), [])
+        (self.project() / "Plan_v3.docx").write_bytes(b"x")
+        hits = self.found("FIL001")
+        self.assertEqual(len(hits), 1)
+        self.assertIn("`Plan.docx` has 3 versions here, v1 to v3.", hits[0]["message"])
+        self.assertIn("Delete nothing", hits[0]["fix"])
+
+    def test_setup_writes_the_brief_file_and_the_new_rules(self):
+        brief = (self.home / "BRIEF.md").read_text(encoding="utf-8")
+        self.assertIn("# How to brief Ana", brief)
+        self.assertIn("`HANDOFF.md`", brief)
+        self.assertNotIn("{{", brief)
+        rules = (self.home / "AGENTS.md").read_text(encoding="utf-8")
+        for title in ("Change the structure with the skill.", "Facts that outlive a task go in `FACTS.md`.", "Brief from `BRIEF.md`."):
+            self.assertIn("- **%s**" % title, rules)
+        self.assertIn("When Ana is talking to you in this session, you are that session", rules)
+        self.assertEqual(self.found("LNK001"), [])
+
+    def test_upgrade_adds_the_brief_file_and_never_replaces_one(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        rules_path = self.home / "AGENTS.md"
+        titles = [title for step in ws.UPGRADES if step["version"] == "0.5.0" for title in step["rules"]]
+
+        def make_old():
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            settings["skill_version"] = "0.4.0"
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            kept = [line for line in rules_path.read_text(encoding="utf-8").splitlines(keepends=True)
+                    if not any("**%s**" % title in line for title in titles) and "agent-workspace-setup:rules-0.5.0" not in line
+                    and "Added with version 0.5.0" not in line and "On rule 8" not in line]
+            rules_path.write_text("".join(kept), encoding="utf-8")
+
+        make_old()
+        (self.home / "BRIEF.md").unlink()
+        before = manifest(self.home)
+        code, output = run("upgrade", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("`BRIEF.md`: a new file at the top of the workspace", output)
+        self.assertIn("On rule 8, one writer per work folder", output)
+        self.assertEqual(before, manifest(self.home))
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("# How to brief Ana", (self.home / "BRIEF.md").read_text(encoding="utf-8"))
+        added = rules_path.read_text(encoding="utf-8")
+        for title in titles:
+            self.assertEqual(added.count("**%s**" % title), 1, title)
+        self.assertEqual(self.found("LNK001"), [])
+        make_old()
+        (self.home / "BRIEF.md").write_text("my own notes\n", encoding="utf-8")
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("`BRIEF.md`: a new file", output)
+        self.assertEqual((self.home / "BRIEF.md").read_text(encoding="utf-8"), "my own notes\n")
+
+    def test_the_weekly_status_counts_the_proposals(self):
+        def proposed():
+            run("routine", "run", "--kind", "weekly", "--runner", "manual", "--home", self.home)
+            found = re.search(r"\*\*Proposed changes:\*\* (\d+)\. Say \"review my workspace\"", (self.home / "STATUS.md").read_text(encoding="utf-8"))
+            return int(found.group(1)) if found else 0
+
+        first = proposed()
+        self.assertEqual(first, len(re.findall(r"^\d+\. ", run("review", "--home", self.home)[1], re.M)))
+        (self.inbox / "scan.pdf").write_bytes(b"x")
+        self.assertEqual(proposed(), first + 1)
+
+    def test_the_routine_plan_says_stop_before_anything_is_scheduled(self):
+        code, output = run("routine", "plan", "--runner", "cowork", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("**Next:** Stop here and show this to the owner. Asking for a check is not yet a yes to this job", output)
+
+
 class PackageTests(unittest.TestCase):
     """The skill's own text: what a host loads and what a person reads."""
 
@@ -1696,8 +2486,8 @@ class PackageTests(unittest.TestCase):
 
     def test_skill_md_stays_short(self):
         text = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
-        self.assertLess(len(text.encode("utf-8")), 15500)
-        self.assertLess(len(text.splitlines()), 155)
+        self.assertLess(len(text.encode("utf-8")), 19500)
+        self.assertLess(len(text.splitlines()), 192)
 
     def test_the_docs_name_the_current_version(self):
         modes = (SKILL_DIR / "references" / "modes.md").read_text(encoding="utf-8")

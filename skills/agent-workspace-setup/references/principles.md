@@ -39,11 +39,12 @@ The names in this picture are made up.
 
 - **The home's number is your choice:** any ten from 10 to 90. Setup looks at the names of the folders around the place you picked and suggests one that fits. 90 is the suggestion when it's free, because it leaves 10 to 80 for your own folders.
 - **Group folders** take numbers inside the home's ten. With a home at 90: 90 Inbox, 91 Projects, 92 Areas, 95 Data. With a home at 10: 10, 11, 12, 15.
+- **The groups are your choice.** Setup asks whether you want ours or your own. Your own are numbered in the order you list them, up to eight besides the Inbox, and each has one line that says what goes there. Agents file new work by those lines, and the map shows them. You can add a group later, or change a line.
 - **Work folders** get the group's number, a dot and a counter: `91.01`, `91.02`. The script gives the next one.
 - **A folder keeps its number for good.** Rename it, archive it, bring it back, move it from Projects to Areas: the number stays. A project that became ongoing work is still `91.03`, now inside `92_Areas`.
 - **A number is never used twice,** including after you delete a folder.
 - **Names are yours.** Rename `91_Projects` to `91_Jobs` if you like. The script goes by the numbers.
-- **99 work folders fit in a group.** When one gets close, the check suggests adding another group, such as `93_Clients`.
+- **99 work folders fit in a group.** When one gets close, the check suggests adding another group, such as `93_Clients`. Ask your agent to "add a group".
 
 **What keeps the numbers honest**
 
@@ -68,6 +69,9 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 - Leave your existing folders exactly where they are. A work folder records where its documents live, and the agent opens them by path.
 - No agent files go into document folders. Changing or adding a document there needs your OK for that action.
 - **One master per deliverable.** Drafts live in the work folder as `_v1`, `_v2`. Once you approve one, the hand-off's "Main files" line says where the master lives.
+- **The six standard files are never copied.** An agent updates `HANDOFF.md` in place. A `HANDOFF_v2.md` would leave the next session reading a stale file, so the check flags it.
+- **Names that sort.** A dated file starts with its date, such as `2026-01-31 Site visit notes.md`. A recurring series is one work folder, and older files move into a folder for each year once there are about 30.
+- **One table, not many folders.** A list of similar things, such as contacts or suppliers, is one table in one file.
 - If a task needs a file that isn't there, the agent stops and says so.
 
 ## What each file is for
@@ -80,12 +84,15 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | `_workspace/` | the AI home | The skill's records: settings, the number ledger, the moves log. Not for editing by hand |
 | `_workspace/friction.md` | the AI home | One line from an agent each time a command of the skill tripped it. Yours to read, pass on and empty |
 | `STATUS.md` | the AI home | Only with a routine: what needs you today. Rewritten by every run |
+| `BRIEF.md` | the AI home | How to brief you, step by step, for an agent with or without the skill |
+| `_workspace/snapshots/` | the AI home | A copy of a hand-off, kept each time before a tidy-up rewrites it |
 | `AGENTS.md` | each group | Three lines that send an agent to the rules and the map |
 | `CLAUDE.md` | each group and work folder | One line that makes Claude load the `AGENTS.md` beside it |
 | `README.md` | each work folder | What the work is and how the folder is organized. It changes only when the goal changes |
 | `HANDOFF.md` | each work folder | Where the work stands and what's next. The memory |
 | `DECISIONS.md` | each work folder | Your decisions, with the date and the reason, so nobody reopens them |
 | `AGENT_SYNC.md` | each work folder | Notes between agents and sessions |
+| `FACTS.md` | a work folder, when needed | Optional. Facts that outlive a task, each with its source and date |
 | `AGENTS.md` | each work folder | A pointer to the home's rules and four starter rules, plus any rules for this work only |
 
 Every work folder starts with the same six files, so any project or area reads the same way.
@@ -123,6 +130,7 @@ Only your decisions go here. When one changes, add a new entry and mark the old 
 - **A fact carries its source.** When an agent writes down a number, a date, a price, a name or a promise that didn't come from its own work in that session, it adds where it came from and when, in brackets: `(the supplier's quote, 2026-01-12)`.
 - **Two sources that disagree are both written down,** and the conflict goes under Don't forget until you settle it.
 - **What couldn't be checked is marked `Unconfirmed`.** The check counts those lines, and a brief lists them.
+- **Facts that outlive a task get their own file.** A name, an address, an account or a term the work will need again goes into `FACTS.md` in the work folder: one line each, as `- <fact> (<source>, <date>)`. The file appears with the first fact. A changed fact gets a new line, and the old one is marked `(Replaced <date>)`. The check flags a line with no source and date. No passwords or keys go there.
 - **A brief says what it didn't cover:** private folders, documents that aren't on this computer, hand-offs it didn't read, and everything outside the workspace, such as mail and chat.
 
 ## When files disagree
@@ -162,13 +170,31 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 
 ## Sessions and agents
 
-- **One writer per work folder.** Only the session you are working with edits that folder's hand-off and decisions. Other sessions leave a note in `AGENT_SYNC.md`.
+- **One writer per work folder.** Only the session you are working with edits that folder's hand-off and decisions. Other sessions leave a note in `AGENT_SYNC.md`. The session you are talking to is that writer. A scheduled or background agent is not.
 - **Fresh sessions.** Start new work in a new session from the hand-off. A long chat drifts, and some tools replay an old chat's edits over newer files.
 - **A brief session** reads across all work folders and reports. It edits no hand-off.
+
+## Your other folders, if you want help
+
+- **It is optional.** Setup asks whether you want only an AI home, or also help with the folders beside it. You can ask later too: "organize my folders".
+- **The agent looks at names only,** two levels down at most, and asks what each folder is for. Private folders and folders that belong to an app are named first and left alone.
+- **You get one numbered list of changes:** create this folder, rename that one, move this into that. You approve by number.
+- **The numbers are simple.** A folder takes two digits and a name. At the top, an inbox takes 00, an archive 99, and the tens between are yours. One level down, numbers stay inside the parent's ten.
+- **No agent file is written there.** The map of your folders, the log of every change and the keep list all live in the AI home.
+- **Nothing is opened and nothing is deleted.** A rename or a move can be undone.
+
+## Review, by number
+
+- **"Review my workspace"** gives one numbered list of proposed changes: closed work to archive, Inbox items to file, hand-offs to tidy, questions only you can answer.
+- **You approve by number.** "Do 1 and 3" does those two and nothing else.
+- **Every move is logged** and can be undone, including an Inbox item filed into a work folder. The item is moved unopened.
+- **Before a hand-off is rewritten,** a copy of it is kept in `_workspace/snapshots/`.
+- **Structure changes go through the skill.** Agents never rename, move or archive a numbered folder by hand, because the number ledger and the move log would miss it.
 
 ## What the skill never does
 
 - It deletes nothing. If something should go, it tells you and you delete it.
 - It never overwrites a file. It creates new ones, keeps its own records, and refreshes the tables it owns in the map. After you update the skill and approve it, it adds new rules to the end of the home's `AGENTS.md`.
-- It never touches a folder outside the AI home.
+- It never writes a file outside the AI home, and it never opens your documents on its own.
+- It never touches a folder outside the AI home, unless you ask it to help organize your folders. Then it creates, renames and moves only the folders you approve by number, logs each change in the AI home, and can undo a rename or a move.
 - It never sends, posts, shares or pays.

@@ -33,7 +33,7 @@ import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
@@ -47,6 +47,9 @@ ARCHIVE_DIR = "_Archive"
 STATUS_FILE = "STATUS.md"
 RUNS_FILE = "runs.jsonl"
 FINDINGS_FILE = "findings.json"
+SNAPSHOT_DIR = "snapshots"
+BRIEF_FILE = "BRIEF.md"
+FACTS_FILE = "FACTS.md"
 ROUTINE_KINDS = ("daily", "weekly")
 ROUTINE_GRACE = {"daily": 3, "weekly": 10}  # days without a good run before the check says so
 OFFER_AGAIN_DAYS = 30
@@ -100,6 +103,29 @@ UPGRADES = [
         "rules": ["When files disagree, this order decides, and you say so.", "Dates the check can read.",
                   "Number the decisions.", "Read the status first, if there is one."],
     },
+    {
+        "version": "0.5.0",
+        "news": [
+            "The standard files are updated in place and never saved as a second copy such as `HANDOFF_v2.md`. "
+            "The check flags a copy, because the next session reads only the original.",
+            "The check reads the Session log and the decisions for shape: dated lines, newest first, well-formed entries.",
+            "Naming that sorts: dated files start with the date, and a recurring series is one work folder.",
+            "A new request, \"review my workspace\": a numbered list of proposed changes. The owner approves by number, "
+            "and nothing else changes.",
+            "Inbox items can be filed into a work folder with a logged move that undo reverses.",
+            "A copy of a hand-off is kept in `%s/%s` before a tidy-up rewrites it." % (RECORDS, SNAPSHOT_DIR),
+            "Groups can be the owner's own: \"add a group\" makes one, with one line on what goes there.",
+            "`%s` at the top of the workspace tells any agent how to brief the owner, with or without this skill." % BRIEF_FILE,
+            "An optional `%s` in a work folder holds facts that outlive a task, each with its source and date." % FACTS_FILE,
+            "Optional help with the folders beside the workspace: \"organize my folders\" proposes a numbered layout, and only "
+            "the changes the owner approves by number are made. No agent file is ever written there.",
+        ],
+        "rules": ["Update the standard files in place.", "Names that sort, and lists that stay small.",
+                  "Change the structure with the skill.", "Facts that outlive a task go in `%s`." % FACTS_FILE,
+                  "Brief from `%s`." % BRIEF_FILE],
+        "note": "On rule 8, one writer per work folder: when the owner is talking to you in this session, you are that "
+                "writer. A scheduled or background agent is not, and leaves a note in `AGENT_SYNC.md`.",
+    },
 ]
 
 # Group numbers are offsets from the home's ten: a home numbered 90 gets 90, 91, 92, 95, 99.
@@ -112,6 +138,9 @@ GROUPS = {
     9: ("Archive", "Closed work from before each group had its own archive."),
 }
 KINDS = {"project": 1, "area": 2, "data": 5}
+KIND_OF = {offset: kind for kind, offset in KINDS.items()}
+GROUP_WORK = ("finishes", "ongoing")
+OWN_OFFSETS = range(1, 9)  # a home holds up to eight groups besides the Inbox; offset 9 was the old archive
 STATUSES = ("Active", "Paused", "Ongoing", "Closed")
 HEADINGS = ["How to continue", "Current state", "Next actions", "Don't forget", "Session log"]
 AGENT_FILES = ("AGENTS.md", "CLAUDE.md", "HANDOFF.md", "DECISIONS.md", "AGENT_SYNC.md")
@@ -331,6 +360,29 @@ class Home:
     def skill_version(self):
         """The version of the skill that set this workspace up, or last upgraded it."""
         return str(self.settings.get("skill_version") or FIRST_VERSION)
+
+    def group_lines(self):
+        """The groups the settings describe, by number. Empty for a workspace that uses the built-in four."""
+        found = {}
+        for entry in self.settings.get("groups") or []:
+            number = entry.get("number") if isinstance(entry, dict) else None
+            if isinstance(number, int) and not isinstance(number, bool) and 0 <= number - self.number <= 8:
+                found[number] = entry
+        return found
+
+    def group_info(self, number):
+        """What goes in a group and whether its work finishes: the line in the settings, else the built-in one."""
+        offset = number - self.number
+        entry = self.group_lines().get(number)
+        if entry is None:
+            kind = KIND_OF.get(offset, "")
+            return {"about": GROUPS[offset][1] if offset in GROUPS else "Your own group.",
+                    "work": "finishes" if kind == "project" else "ongoing", "kind": kind}
+        kind = entry.get("kind") if entry.get("kind") in KINDS else ""
+        about = " ".join(str(entry.get("about") or "").split())
+        if not about:
+            about = GROUPS[KINDS[kind]][1] if kind else (GROUPS[0][1] if offset == 0 else "Your own group.")
+        return {"about": about, "work": entry.get("work") if entry.get("work") in GROUP_WORK else "ongoing", "kind": kind}
 
     def is_private(self, rel_path):
         rel_path = rel_path.strip("/").lower()
@@ -575,16 +627,26 @@ class State:
         return top + 1 + already
 
     def find(self, number):
-        """The one live folder with this number, and its ledger entry."""
+        """The one live folder with this number, or with a name that fits only one, and its ledger entry."""
         number = number.strip()
+        listed = sorted(self.numbered(), key=lambda item: item["number"])
+        here = "Work folders here: %s." % (", ".join(
+            "%s %s" % (item["number"], item["name"].replace("-", " ")) for item in listed[:20]) or "none yet")
         if not re.match(r"^\d{2}\.\d{2}$", number):
-            raise Refuse(
-                "`%s` isn't a work folder number. Numbers look like `%d.01`." % (number, self.home.group_no(1)),
-                "Run check to list the work folders and their numbers.",
-            )
+            filler = {"the", "a", "an", "my", "our", "project", "area", "folder", "work"}
+            words = [word for word in re.findall(r"[^\W_]+", number.lower()) if word not in filler]
+            hits = [item for item in listed if words and all(word in item["name"].lower() for word in words)]
+            if len(hits) != 1:
+                raise Refuse(
+                    "`%s` %s. Numbers look like `%d.01`." % (
+                        number, "fits more than one work folder" if hits else "isn't a work folder number, or a name here",
+                        self.home.group_no(1)),
+                    "Use the number. " + here,
+                )
+            number = hits[0]["number"]
         items = [item for item in self.numbered() if item["number"] == number]
         if not items:
-            raise Refuse("No folder has the number %s." % number, "Run check to list the work folders and their numbers.")
+            raise Refuse("No folder has the number %s." % number, here)
         if len(items) > 1:
             raise Refuse(
                 "Number %s is on %d folders, so it's unclear which one you mean." % (number, len(items)),
@@ -666,6 +728,35 @@ def render(name, context):
     return "\n".join(lines) + "\n"
 
 
+def group_names(home, groups):
+    """{number: folder name} for the groups that hold work folders: not the Inbox, not the old archive."""
+    return {number: path.name for number, path in groups.items() if number not in (home.group_no(0), home.group_no(9))}
+
+
+def find_group(home, names, wanted):
+    """The number of the group the owner means: project, area or data; a group's number; or its name."""
+    text = str(wanted).strip().strip("/")
+    low = text.lower()
+    if low in KINDS:
+        hits = [number for number in names if home.group_info(number)["kind"] == low]
+    elif low.isdigit():
+        hits = [number for number in names if number == int(low)]
+    else:
+        hits = []
+        for number, name in names.items():
+            match = GROUP_RE.match(name)
+            bare = match.group(2) if match else name
+            if low in (name.lower(), bare.lower()) or slug(text).lower() == bare.lower():
+                hits.append(number)
+    if len(hits) == 1:
+        return hits[0]
+    choices = ", ".join("`%s`" % name for _, name in sorted(names.items())) or "none yet"
+    if low in KINDS:
+        raise Refuse("This workspace has no group for `%s` work." % low,
+                     "Name one of its groups instead, by number or name: %s." % choices)
+    raise Refuse("`%s` isn't a group here." % text, "Use one of these, by number or name: %s." % choices)
+
+
 def group_label(home, groups, offset):
     number = home.group_no(offset)
     if number in groups:
@@ -682,6 +773,7 @@ def home_context(home, groups):
         "OWNER_FIRST": home.owner_first(),
         "DATE": today(),
         "HANDOFF": home.handoff,
+        "HANDOFF_STEM": Path(home.handoff).stem,
         "G_INBOX": group_label(home, groups, 0) + "/",
         "G_PROJECTS": group_label(home, groups, 1) + "/",
         "G_AREAS": group_label(home, groups, 2) + "/",
@@ -773,6 +865,74 @@ def open_notes(text):
     return [stamp for stamp in heads if stamp not in answered and (days_since(stamp) or 0) > NOTE_DAYS]
 
 
+COPY_RE = r"[ _.\-]*(?:v\d+|copy(?:[ _]*\d+)?|\d+|new|old|backup|bak|final|draft)"
+
+
+def standard_copies(folder, names):
+    """Markdown files beside a standard file that look like a second copy of it, such as `HANDOFF_v2.md`."""
+    found = []
+    try:
+        siblings = sorted(child.name for child in folder.iterdir() if child.is_file() and child.suffix.lower() == ".md")
+    except OSError:
+        return found
+    for name in names:
+        stem = Path(name).stem
+        for sibling in siblings:
+            if sibling.lower() != name.lower() and re.fullmatch(re.escape(stem) + "(?:" + COPY_RE + ")+",
+                                                              Path(sibling).stem, re.I):
+                found.append((name, sibling))
+    return found
+
+
+def log_problem(section):
+    """What is wrong with a Session log's lines, or an empty string."""
+    entries = [line for line in section.splitlines() if re.match(r"^[ \t]*[-*][ \t]+\S", line)]
+    dates = [re.match(r"^[ \t]*[-*][ \t]+(20\d{2}-\d{2}-\d{2})\b", line) for line in entries]
+    undated = sum(1 for found in dates if not found)
+    if undated:
+        return "%d Session log line%s with no date at the start." % (undated, "" if undated == 1 else "s")
+    stamps = [found.group(1) for found in dates]
+    if stamps != sorted(stamps, reverse=True):
+        return "The Session log isn't newest first."
+    return ""
+
+
+def bad_decisions(text):
+    """Line numbers of entries in a DECISIONS.md that don't start with a number or a date."""
+    bad = []
+    for number, line in enumerate(text.splitlines(), 1):
+        if not re.match(r"^[-*][ \t]+\S", line) or re.match(r"^[-*][ \t]+(none|nothing)\b", line, re.I):
+            continue
+        if not re.match(r"^[-*][ \t]+\*\*(?:D-\d{3,}[ \t]*·[ \t]*)?20\d{2}-\d{2}-\d{2}\b", line):
+            bad.append(number)
+    return bad
+
+
+def unsourced_facts(text):
+    """How many lines of a FACTS.md give a fact with no (source, date) and no Unconfirmed mark."""
+    count = 0
+    for line in text.splitlines():
+        if not re.match(r"^[-*][ \t]+\S", line) or re.match(r"^[-*][ \t]+(none|nothing)\b", line, re.I):
+            continue
+        if not re.search(r"\([^()]*20\d{2}-\d{2}-\d{2}[^()]*\)", line) and "unconfirmed" not in line.lower():
+            count += 1
+    return count
+
+
+def version_sets(folder):
+    """Files at the top of a work folder that exist in three or more versions: {name: [1, 2, 3]}."""
+    found = {}
+    try:
+        names = [child.name for child in folder.iterdir() if child.is_file()]
+    except OSError:
+        return found
+    for name in names:
+        match = re.match(r"^(.+?)[ _-]v(\d{1,3})(\.[^.]+)?$", name, re.I)
+        if match:
+            found.setdefault(match.group(1) + (match.group(3) or ""), set()).add(int(match.group(2)))
+    return {stem: sorted(versions) for stem, versions in found.items() if len(versions) >= 3}
+
+
 def no_next_action(text):
     """True when a hand-off's first next action is missing, or only says there is none."""
     return not re.sub(r"(?i)\b(none|nothing|n/?a|tbd|yet)\b|[\W_]", "", text or "")
@@ -796,11 +956,10 @@ def fingerprint(body):
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:12]
 
 
-def map_tables(home, state):
+def map_tables(home, state, folders=False):
     rows = ["| Group | What goes there |", "|---|---|"]
     for number, path in sorted(state.groups.items()):
-        offset = number - home.number
-        about = GROUPS[offset][1] if offset in GROUPS else "Your own group."
+        about = home.group_info(number)["about"]
         if home.is_private(home.rel(path)):
             about = "Private."
         rows.append("| [%s](%s/) | %s |" % (cell(path.name), link(path.name), about))
@@ -823,7 +982,10 @@ def map_tables(home, state):
         rows.append("| %s | [%s](%s) | %s | %s |" % (item["number"], cell(title), link(target), cell(status), cell(purpose)))
     if not numbered:
         rows.append("| | None yet | | |")
-    return {"groups": groups_table, "work": "\n".join(rows) + "\n"}
+    tables = {"groups": groups_table, "work": "\n".join(rows) + "\n"}
+    if folders:
+        tables["folders"] = folders_table(home)
+    return tables
 
 
 def refresh_map(home, state, write):
@@ -832,7 +994,7 @@ def refresh_map(home, state, write):
     if not path.is_file():
         return "no-readme", "`README.md` is missing, so there is no map to refresh."
     text = read_text(path)
-    tables = map_tables(home, state)
+    tables = map_tables(home, state, folders="agent-workspace-setup:folders" in text)
     new_text, changed = text, False
     for name, table in tables.items():
         opens = len(re.findall(r"<!-- agent-workspace-setup:%s(?: sha=[0-9a-f]{12})? -->" % name, text))
@@ -1010,6 +1172,59 @@ def load_answers(path):
     return data
 
 
+def plan_groups(answers, home_number, problems):
+    """The owner's own groups from the answers file, as settings entries. None when they take the built-in four."""
+    raw = answers.get("groups")
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not raw:
+        problems.append("`groups` must be a list of groups, each with `name` and `about`. Leave it out for Projects, Areas and Data.")
+        return None
+    inbox = {"number": home_number, "name": GROUPS[0][0], "about": GROUPS[0][1]}
+    own, seen = [], {GROUPS[0][0].lower()}
+    for index, item in enumerate(raw, 1):
+        if not isinstance(item, dict) or not str(item.get("name") or "").strip():
+            problems.append("Group %d has no `name`." % index)
+            continue
+        name = slug(str(item["name"]))
+        about = " ".join(str(item.get("about") or "").split())
+        if name.lower() == "inbox":  # the Inbox is always there; only its line can change
+            inbox["about"] = about or inbox["about"]
+            continue
+        if name.lower() in seen:
+            problems.append("Group `%s` is listed twice." % name)
+            continue
+        seen.add(name.lower())
+        ours = next((offset for offset in KIND_OF if GROUPS[offset][0].lower() == name.lower()), None)
+        kind = KIND_OF.get(ours, "")
+        about = about or (GROUPS[ours][1] if ours else "")
+        if not about:
+            problems.append("Group `%s` needs `about`: one line on what goes there." % name)
+            continue
+        work = str(item.get("work") or ("finishes" if kind == "project" else "ongoing")).strip().lower()
+        if work not in GROUP_WORK:
+            problems.append("Group `%s`: `work` must be finishes or ongoing." % name)
+            continue
+        entry = {"number": 0, "name": name, "about": about, "work": work}
+        if kind:
+            entry["kind"] = kind
+        own.append(entry)
+    if len(own) > len(OWN_OFFSETS):
+        problems.append("A home holds up to %d groups besides the Inbox. `groups` lists %d." % (len(OWN_OFFSETS), len(own)))
+        return None
+    if not own:
+        problems.append("`groups` names no group besides the Inbox. Leave it out for Projects, Areas and Data.")
+        return None
+    for offset, entry in zip(OWN_OFFSETS, own):
+        entry["number"] = home_number + offset
+    return [inbox] + own
+
+
+def gets_files(home, group):
+    """Whether setup writes the two small agent files into a group folder: the built-in three, and any group it creates."""
+    return (group["offset"] in KIND_OF or (group["new"] and group["offset"] not in (0, 9))) and not home.is_private(group["name"])
+
+
 def plan_setup(answers):
     """Works out everything setup would do. Returns (plan, problems). Changes nothing."""
     problems = []
@@ -1036,10 +1251,16 @@ def plan_setup(answers):
             else:
                 if number is None:
                     number = suggest_number(location)[0]
+                named = str(answers.get("home_name") or "").strip()
                 if not valid_ten(number):
                     problems.append("`home_number` must be a ten from 10 to 90, such as 90 or 10.")
+                elif named and (location / named).is_dir():
+                    # The folder the owner named was taken for the home's name: the home would land beside it, not in it.
+                    problems.append("`home_name` is `%s`, and `location` already holds a folder called `%s`. If the AI home "
+                                    "goes inside that folder, set `location` to `%s` and leave `home_name` out."
+                                    % (named, named, tilde(location / named)))
                 else:
-                    root = location.resolve() / ("%d_%s" % (number, slug(answers.get("home_name") or "AI-Agents")))
+                    root = location.resolve() / ("%d_%s" % (number, slug(named or "AI-Agents")))
     else:
         problems.append("Give `location` (the folder the AI home goes in) or `home` (the AI home itself).")
     if root is None:
@@ -1077,6 +1298,9 @@ def plan_setup(answers):
                 problems.append("`%s` must be a list of text values." % key)
                 value = []
             settings[key] = list(value)
+        own_groups = plan_groups(answers, number, problems)
+        if own_groups:
+            settings["groups"] = own_groups
         home = Home(root.resolve() if root.exists() else root, settings)
         # A private folder given as a full path is written down the way document folders are:
         # relative to the home or from ~/, so the record still reads right on another computer.
@@ -1108,17 +1332,36 @@ def plan_setup(answers):
         problems.append("`work` must be a list.")
         work_items = []
     documents = list(home.settings.get("documents", []))
+    lines = home.group_lines()
+    wanted = ({number: entry.get("name") or "Group" for number, entry in lines.items()} if lines
+              else {home.group_no(offset): GROUPS[offset][0] for offset in (0, 1, 2, 5)})
+    wanted.setdefault(home.group_no(0), GROUPS[0][0])
+    groups = []
+    for number in sorted(set(wanted) | set(state.groups)):
+        path = state.groups.get(number)
+        groups.append({
+            "no": number, "offset": number - home.number, "new": path is None,
+            "name": path.name if path else "%d%s%s" % (number, home.sep, slug(wanted[number])),
+        })
+    names = {group["no"]: group["name"] for group in groups if group["offset"] not in (0, 9)}
     planned, skipped, per_group = [], [], {}
     for index, raw in enumerate(work_items, 1):
         if not isinstance(raw, dict) or not str(raw.get("title") or "").strip():
             problems.append("Work item %d has no `title`." % index)
             continue
         title = str(raw["title"]).strip()
-        kind = str(raw.get("kind") or "project").strip().lower()
-        if kind not in KINDS:
+        kind = str(raw.get("kind") or "").strip().lower()
+        if kind and kind not in KINDS:
             problems.append("Work item %d (`%s`): `kind` must be project, area or data." % (index, title))
             continue
-        status = str(raw.get("status") or ("Ongoing" if kind != "project" else "Active")).strip()
+        try:
+            group_no = find_group(home, names, str(raw.get("group") or "").strip() or kind or "project")
+        except Refuse as refusal:
+            problems.append("Work item %d (`%s`): %s %s" % (index, title, refusal.message, refusal.next_step))
+            continue
+        info = home.group_info(group_no)
+        kind = info["kind"] or "own"
+        status = str(raw.get("status") or ("Active" if info["work"] == "finishes" else "Ongoing")).strip()
         if not status.lower().startswith(tuple(s.lower() for s in STATUSES)):
             problems.append("Work item %d (`%s`): `status` must start with %s." % (index, title, ", ".join(STATUSES)))
             continue
@@ -1127,7 +1370,6 @@ def plan_setup(answers):
             problems.append("Work item %d (`%s`): `documents` must be a list of folder paths." % (index, title))
             continue
         name = slug(title)
-        group_no = home.group_no(KINDS[kind])
         taken = [e for e in state.entries.values()
                  if e["state"] != "retired" and e["name"].lower() == name.lower() and int(e["number"][:2]) == group_no]
         taken += [p for p in planned if p["name"].lower() == name.lower() and p["group_no"] == group_no]
@@ -1159,16 +1401,6 @@ def plan_setup(answers):
             "documents": recorded,
         })
 
-    groups = []
-    for offset in sorted(GROUPS):
-        number = home.group_no(offset)
-        path = state.groups.get(number)
-        if offset == 9 and path is None:
-            continue  # the old archive is kept only where it already exists
-        groups.append({
-            "no": number, "offset": offset, "new": path is None,
-            "name": path.name if path else "%d%s%s" % (number, home.sep, GROUPS[offset][0]),
-        })
     plan = {
         "home": home, "state": state, "existing": existing, "root_new": not root.exists(),
         "groups": groups, "work": planned, "skipped": skipped, "documents": documents,
@@ -1188,10 +1420,11 @@ def home_files(plan):
         ("AGENTS.md", "home-AGENTS.md", context),
         ("CLAUDE.md", "home-CLAUDE.md", context),
         ("README.md", "home-README.md", context),
+        (BRIEF_FILE, "home-BRIEF.md", context),
         (RECORDS + "/README.md", "records-README.md", context),
     ]
     for group in plan["groups"]:
-        if group["offset"] in (1, 2, 5):
+        if gets_files(home, group):
             group_context = dict(context)
             group_context["TITLE"] = group["name"]
             files.append((group["name"] + "/AGENTS.md", "group-AGENTS.md", group_context))
@@ -1234,6 +1467,8 @@ def work_files(plan, item, by):
 def preview_setup(plan, out):
     home = plan["home"]
     mark = lambda new: "  (new)" if new else ""
+    out.say("Where: inside `%s`" % tilde(home.root.parent))
+    out.say()
     out.say("```")  # a fenced block, so the agent passes the tree on as it is
     out.say("%s/%s" % (home.root.name, mark(plan["root_new"])))
     top = [rel for rel, _, _ in home_files(plan) if "/" not in rel]
@@ -1245,7 +1480,7 @@ def preview_setup(plan, out):
         out.say("  %s/  settings.json, ledger.jsonl, README.md  (new)" % RECORDS)
     for group in plan["groups"]:
         line = "  %s/" % group["name"]
-        if group["offset"] in (1, 2, 5) and not (home.root / group["name"] / "AGENTS.md").exists():
+        if gets_files(home, group) and not (home.root / group["name"] / "AGENTS.md").exists():
             line += "  AGENTS.md, CLAUDE.md"
         out.say(line + mark(group["new"]))
         for item in plan["work"]:
@@ -1256,6 +1491,13 @@ def preview_setup(plan, out):
     out.say("```")
     existing = len(plan["state"].numbered())
     out.say()
+    fresh = [group for group in plan["groups"] if group["new"]]
+    if fresh:
+        out.say("What goes in each group:")
+        for group in fresh:
+            out.say("- `%s/`: %s" % (group["name"], home.group_info(group["no"])["about"]))
+        out.say("Every name above is a suggestion. The owner can change any of them before anything is created.")
+        out.say()
     if plan["work"]:
         out.say("The six standard files of a work folder: %s." % ", ".join(name for name, _ in work_templates(home)))
     if existing:
@@ -1331,7 +1573,9 @@ def cmd_setup(args):
         out.say()
         preview_setup(plan, out)
         return out.finish(
-            "Show this preview to the owner exactly as printed. When they approve, run the same command without --dry-run."
+            "Copy this preview into your reply as it is: the Where line, the block with its (new) marks, and the lines "
+            "under it. Don't redraw it or fold the lines into the block. When the owner approves, run the same command "
+            "without --dry-run."
         )
     created, map_message = apply_setup(plan, out, args.by)
     home = plan["home"]
@@ -1361,8 +1605,8 @@ def cmd_setup(args):
 
 def cmd_new(args):
     home = open_home(args)
-    item = {"title": args.title, "kind": args.kind, "purpose": args.purpose, "status": args.status,
-            "documents": args.documents or []}
+    item = {"title": args.title, "kind": args.kind, "group": args.group, "purpose": args.purpose,
+            "status": args.status, "documents": args.documents or []}
     item = {key: value for key, value in item.items() if value not in (None, "")}
     plan, problems = plan_setup({"home": str(home.root), "work": [item]})
     if problems:
@@ -1527,9 +1771,15 @@ RULES = {
     "HND012": ("info", "Current state is behind the Session log"),
     "HND013": ("warn", "A next action is overdue"),
     "HND014": ("info", "Waiting on someone for a long time"),
+    "HND015": ("error", "A second copy of the hand-off"),
+    "HND016": ("warn", "Session log undated or out of order"),
+    "DEC003": ("warn", "A decision entry in the wrong shape"),
+    "WRK006": ("warn", "A second copy of a standard file"),
     "DEC001": ("warn", "A superseded decision is still cited"),
     "DEC002": ("warn", "A cited decision is missing, or a number is used twice"),
     "FCT001": ("info", "README and hand-off give different purposes"),
+    "FCT002": ("warn", "A fact with no source and date"),
+    "FIL001": ("info", "Several older versions beside the newest"),
     "NOTE001": ("info", "An open note between agents is old"),
     "STS001": ("info", "Closed or paused work that could be archived"),
     "MAP001": ("warn", "A work folder is missing from the map"),
@@ -1538,6 +1788,8 @@ RULES = {
     "LNK001": ("error", "A link that points nowhere"),
     "DOC001": ("warn", "An agent file inside a document folder"),
     "DOC002": ("info", "A document location that isn't on this computer"),
+    "OUT001": ("warn", "An agent file outside the AI home"),
+    "LAY001": ("warn", "A file still names a folder by its old place"),
     "SYNC001": ("warn", "A sync conflict copy"),
     "INB001": ("info", "Items waiting in the Inbox"),
     "INB002": ("info", "Inbox items that have waited a long time"),
@@ -1604,7 +1856,7 @@ def run_check(home):
                 "or it hasn't synced yet." % (entry["number"], entry["name"]),
                 "If it is gone for good, run reconcile --retire-missing after the owner's OK.")
     for item in state.disk:
-        if item["number"] is None:
+        if item["number"] is None and item["group_now"] != home.group_no(0):  # the Inbox holds unfiled things
             add("NUM005", item["rel"], "This folder has no number.",
                 "Ask the owner whether it is a piece of work. If so, run new for it and move its files in.")
     for path in state.extra_groups:
@@ -1771,6 +2023,54 @@ def run_check(home):
                     add("NOTE001", item["rel"] + "/AGENT_SYNC.md",
                         "%d open note%s older than %d days." % (len(old_notes), "" if len(old_notes) == 1 else "s", NOTE_DAYS),
                         "Answer each one with a new note that starts `Re: <its timestamp>`, or tell the owner it is still open.")
+            trouble = log_problem(sections.get("Session log", ""))
+            if trouble:
+                add("HND016", rel, trouble, "Start each line with its date, newest first: `- 2026-01-31 · <tool>: <what was done>`.")
+            if decisions_path.is_file():
+                shapeless = bad_decisions(read_text(decisions_path))
+                if shapeless:
+                    add("DEC003", item["rel"] + "/DECISIONS.md",
+                        "%d entr%s not in the decision format, first on line %d."
+                        % (len(shapeless), "y" if len(shapeless) == 1 else "ies", shapeless[0]),
+                        "Each entry starts `- **D-001 · 2026-01-31 · <title>.**`. Fix them with the owner's OK.")
+            for original, copy in standard_copies(item["path"], [name for name, _ in work_templates(home)]):
+                if original == home.handoff:
+                    add("HND015", "%s/%s" % (item["rel"], copy),
+                        "This looks like a second copy of `%s`. The next session reads only the original." % original,
+                        "With the owner's OK, bring anything newer into `%s`, then let the owner remove the copy." % original)
+                else:
+                    add("WRK006", "%s/%s" % (item["rel"], copy), "This looks like a second copy of `%s`." % original,
+                        "With the owner's OK, bring anything newer into `%s`, then let the owner remove the copy." % original)
+
+    if isinstance(home.settings.get("layout"), dict):
+        base = home.root.parent
+        for stray in stray_agent_files(home, base):
+            add("OUT001", "../" + stray.relative_to(base).as_posix(), "This agent file sits outside the AI home.",
+                "Agent files live only in the AI home. If the folder is a code project or belongs to another tool, run "
+                "layout keep \"<its top folder>\". If not, ask the owner before moving what it says into a work folder here.")
+        pairs = [pair for entry in read_layout(home) if entry.get("state") == "done" for pair in entry.get("documents") or []]
+        for path in managed_files(home, state, live_only=True) if pairs else []:
+            text = read_text(path)
+            for old, new in pairs:
+                if re.search(re.escape(old) + r"(?![\w-])", text):
+                    add("LAY001", home.rel(path), "This file still gives a document folder as `%s`. It is now `%s`." % (old, new),
+                        "Edit the line after re-reading the file, with the owner's OK.")
+
+    facts_in = [(FACTS_FILE, home.root / FACTS_FILE)]
+    for item in state.numbered():
+        if item["archived"]:
+            continue
+        facts_in.append(("%s/%s" % (item["rel"], FACTS_FILE), item["path"] / FACTS_FILE))
+        for stem, versions in sorted(version_sets(item["path"]).items()):
+            add("FIL001", item["rel"], "`%s` has %d versions here, v%d to v%d." % (stem, len(versions), versions[0], versions[-1]),
+                "Ask the owner which version counts. With their OK, move the older ones into an `_old/` folder beside it. "
+                "Delete nothing.")
+    for rel, path in facts_in:
+        if path.is_file():
+            bare = unsourced_facts(read_text(path))
+            if bare:
+                add("FCT002", rel, "%d fact%s with no source and date." % (bare, "" if bare == 1 else "s"),
+                    "Add `(<source>, <date>)` to each line, or mark it `Unconfirmed`, with the owner's help.")
 
     readme = home.root / "README.md"
     if readme.is_file():
@@ -1845,8 +2145,10 @@ def run_check(home):
     if inbox is not None:
         waiting = [child for child in inbox.iterdir() if not child.name.startswith(".")]
         if waiting:
-            add("INB001", home.rel(inbox), "%d item%s waiting in the Inbox." % (len(waiting), "" if len(waiting) == 1 else "s"),
-                "Go through them with the owner.")
+            names = sorted(child.name for child in waiting)  # names only, so nobody has to list the folder to see them
+            shown = ", ".join("`%s`" % name for name in names[:6]) + (" and %d more" % (len(names) - 6) if len(names) > 6 else "")
+            add("INB001", home.rel(inbox), "%d item%s waiting in the Inbox: %s." % (len(waiting), "" if len(waiting) == 1 else "s", shown),
+                "Go through them with the owner. To file one: file \"<item>\" --to <number> --dry-run.")
             limit = now().timestamp() - INBOX_DAYS * 86400
             old_items = 0
             for child in waiting:
@@ -1908,7 +2210,7 @@ def run_check(home):
 
 
 # Findings a brief puts under "Needs attention", besides every error.
-BRIEF_RULES = ("HND005", "HND006", "HND009", "HND011", "HND013", "HND014", "WRK001", "VER001", "FRC001",
+BRIEF_RULES = ("HND005", "HND006", "HND009", "HND011", "HND013", "HND014", "HND015", "WRK001", "VER001", "FRC001",
                "ROU001", "ROU002", "ROU003")
 
 
@@ -2057,13 +2359,15 @@ def settle_moves(home):
         source, target = home.root / move["from"], home.root / move["to"]
         if target.exists() and not source.exists():
             append_line(home.records / MOVES_FILE, {"id": move["id"], "state": "done", "settled": iso()})
-            append_line(home.records / LEDGER_FILE, dict(move["ledger"], time=iso()))
+            if move.get("ledger"):  # filing an Inbox item changes no number, so it has no ledger line
+                append_line(home.records / LEDGER_FILE, dict(move["ledger"], time=iso()))
         elif source.exists() and not target.exists():
             append_line(home.records / MOVES_FILE, {"id": move["id"], "state": "abandoned", "settled": iso()})
 
 
-def check_move(home, source, target, make_parent=False):
-    """Reasons a move is refused. An empty list means it is safe. make_parent allows a target folder that is new."""
+def check_move(home, source, target, make_parent=False, files=False):
+    """Reasons a move is refused. An empty list means it is safe. make_parent allows a target folder that is new;
+    files allows a single file, for an Inbox item."""
     reasons = []
     for label, path in (("from", source), ("to", target)):
         try:
@@ -2079,7 +2383,7 @@ def check_move(home, source, target, make_parent=False):
         return reasons
     if os.path.islink(str(source)):
         reasons.append("`%s` is a link. Links are never moved." % home.rel(source))
-    elif not source.is_dir():
+    elif not (source.is_dir() or (files and source.is_file())):
         reasons.append("`%s` isn't here." % home.rel(source))
     if target.exists() or os.path.islink(str(target)):
         reasons.append("`%s` already exists." % home.rel(target))
@@ -2155,20 +2459,12 @@ def cmd_rename(args):
 
 def cmd_move(args):
     home, state, item, entry = prepare_move(args, "move a folder")
-    wanted = args.to.strip().lower()
-    if wanted in KINDS:
-        group_no = home.group_no(KINDS[wanted])
-    elif wanted.isdigit():
-        group_no = int(wanted)
-    else:
-        raise Refuse("`%s` isn't a group. Use project, area, data, or a group number." % args.to,
-                     "Run the command again with one of those.")
+    old = home.group_no(9)
     if item["archived"]:
         raise Refuse("%s is in the archive." % item["number"], "Run restore first, then move it.")
-    if group_no == home.group_no(9):
+    if args.to.strip().isdigit() and int(args.to.strip()) == old:
         raise Refuse("To close work, use archive.", "Run archive %s --dry-run." % item["number"])
-    if group_no not in state.groups:
-        raise Refuse("There is no group folder numbered %d." % group_no, "Run check to see the groups.")
+    group_no = find_group(home, {number: path.name for number, path in state.groups.items() if number != old}, args.to)
     out = Out()
     if group_no == item["group_now"]:
         out.say("`%s` is already in that group." % item["rel"])
@@ -2246,7 +2542,7 @@ def cmd_undo(args):
         return out.finish("Nothing to do.")
     move = done[-1]
     current, original = home.root / move["to"], home.root / move["from"]
-    reasons = check_move(home, current, original)
+    reasons = check_move(home, current, original, files=move.get("op") == "file")
     if not reasons and move.get("key") and (current / home.handoff).is_file():
         found = read_key(current / home.handoff)
         if found is not None and found != move["key"]:
@@ -2279,7 +2575,7 @@ def cmd_undo(args):
     out.say()
     out.say("`%s`  →  `%s`" % (move["to"], move["from"]))
     out.say(map_message)
-    return out.finish("Tell the owner the %s was undone." % move["op"])
+    return out.finish("Tell the owner the %s was undone." % {"file": "filing"}.get(move["op"], move["op"]))
 
 
 # ----------------------------------------------------------------------------
@@ -2468,10 +2764,9 @@ def cmd_adopt(args):
         raise Refuse("`%s` already has a number." % src_rel, "Use move to change its group, or rename to change its name.")
     if source in state.groups.values() or src_rel.split("/")[0] == RECORDS or source == home.root:
         raise Refuse("`%s` is part of the workspace's own structure." % src_rel, "Pick a folder that holds a piece of work.")
-    group_no = home.group_no(KINDS[args.kind])
-    group = state.groups.get(group_no)
-    if group is None:
-        raise Refuse("There is no group folder numbered %d." % group_no, "Run setup again: it adds only what is missing.")
+    group_no = find_group(home, group_names(home, state.groups), args.group or args.kind or "project")
+    group = state.groups[group_no]
+    group_info = home.group_info(group_no)
     counter = state.next_counter(group_no)
     if counter > 99:
         raise Refuse("Group %d is full: its numbers have reached .99." % group_no, "Ask the owner to add another group folder.")
@@ -2489,7 +2784,7 @@ def cmd_adopt(args):
         key, needs_key_line = new_key(), existing_handoff.is_file()
     else:
         needs_key_line = False
-    status = "Ongoing" if args.kind != "project" else "Active"
+    status = "Active" if group_info["work"] == "finishes" else "Ongoing"
     will_create = [name_ for name_, _ in work_templates(home) if not (source / name_).exists()]
     out = Out()
     if args.dry_run:
@@ -2504,7 +2799,7 @@ def cmd_adopt(args):
         settle_moves(home)
         moves, _ = read_moves(home)
         move_id = max([move["id"] for move in moves] + [0]) + 1
-        event = {"event": "issued", "number": number, "key": key, "name": name, "kind": args.kind,
+        event = {"event": "issued", "number": number, "key": key, "name": name, "kind": group_info["kind"] or "own",
                  "group_now": group_no, "host": host(), "adopted_from": src_rel}
         append_line(home.records / MOVES_FILE, {
             "id": move_id, "op": "adopt", "number": number, "key": key, "from": src_rel, "to": dst_rel,
@@ -2621,8 +2916,13 @@ def tool_info(name):
             override = os.environ.get(spec["home_env"]) if spec["home_env"] else None
             base = Path(override).expanduser() if override else Path.home() / spec["home"]
             skills = Path.home() / spec["skills"] if spec["skills"] else base / "skills"
+            usual = Path.home() / spec["home"]
+            moved = ""
+            if override and base.resolve() != usual.resolve():  # a wrapper app, or a second profile, set the tool's home
+                moved = ("`%s` points %s at `%s` in this session, not the usual `%s`. What is written there serves only "
+                         "sessions started the same way." % (spec["home_env"], spec["label"], tilde(base), tilde(usual)))
             return {
-                "key": key, "label": spec["label"], "skills": skills,
+                "key": key, "label": spec["label"], "skills": skills, "moved": moved,
                 "instructions": base / spec["instructions"] if spec["instructions"] else None,
             }
     raise Refuse("`%s` isn't a tool this skill knows. Known: %s." % (name, ", ".join(sorted(TOOLS))),
@@ -2681,10 +2981,12 @@ def copy_skill(destination):
 
 
 def cmd_install(args):
-    targets = []
+    targets, moved = [], []
     for name in args.tool or []:
         info = tool_info(name)
         targets.append((info["label"], info["skills"] / SKILL))
+        if info["moved"] and info["skills"].parent != Path.home() / ".agents" and info["moved"] not in moved:
+            moved.append(info["moved"] + " For the usual place, pass --dest with its skills folder.")
     for raw in args.dest or []:
         targets.append((raw, Path(raw).expanduser() / SKILL))
     out = Out()
@@ -2733,8 +3035,12 @@ def cmd_install(args):
         else:
             out.say("- %s: %s is %s." % (plan["label"], where, STATE_WORDS[plan["state"]]))
             blocked = True
+    for note in moved:
+        out.say()
+        out.say("Note: " + note)
     if args.dry_run:
-        return out.finish("Show this to the owner. When they approve these exact folders, run it without --dry-run.")
+        return out.finish("Show this to the owner%s. When they approve these exact folders, run it without --dry-run."
+                          % (", the note included" if moved else ""))
     for plan in plans:
         destination = plan["destination"]
         if plan["state"] == "missing":
@@ -2810,6 +3116,8 @@ def cmd_connect(args):
     out.say("# Connect %s%s" % (info["label"], " (dry run): nothing was written" if args.dry_run else ""))
     out.say()
     out.say("File: `%s`%s" % (tilde(path), "" if path.is_file() else " (new)"))
+    if info["moved"]:
+        out.say("Note: " + info["moved"])
     if path.is_file():
         out.say("Backup first: `%s`" % tilde(backup))
     out.say(action)
@@ -2991,6 +3299,10 @@ def status_text(home, moment, kind, runner, findings, rows, ages, runs, monthly)
     if kind == "weekly":
         tidy = sorted({label(rows, finding["path"]) for finding in findings if finding["rule"] in TIDY_RULES})
         section("Worth a tidy-up", tidy, "Nothing.")
+        proposed = len(proposals(home, findings, rows))
+        if proposed:
+            lines.extend(["", "**Proposed changes:** %d. Say \"review my workspace\" to go through them by number. "
+                              "Nothing changes without your OK." % proposed])
         if monthly:
             old = sorted({label(rows, finding["path"]) + ": " + finding["message"] for finding in findings
                           if finding["rule"] == "STS001"
@@ -3167,9 +3479,10 @@ def routine_plan(args, home):
     out.say()
     out.say("Record it, so the check can tell when it stops: `routine record --kind daily --runner %s --at \"08:00\"`." % runner)
     out.say("Then start one run and confirm that `%s` appeared." % STATUS_FILE)
-    return out.finish("Show this to the owner and ask which job they want, if any. Create a scheduled task only after their yes "
-                      "for that job. If they say no, or that nothing should be scheduled, run routine offer --answer no first, "
-                      "so that no later session asks again.")
+    return out.finish("Stop here and show this to the owner. Asking for a check is not yet a yes to this job: they see the "
+                      "schedule, the prompt and the command first, and then say which job they want, if any. Create a "
+                      "scheduled task only after that yes. If they say no, or that nothing should be scheduled, run "
+                      "routine offer --answer no first, so that no later session asks again.")
 
 
 def routine_change(args, home):
@@ -3248,6 +3561,995 @@ def cmd_routine(args):
 
 
 # ----------------------------------------------------------------------------
+# layout: optional help with the folders beside the AI home. Only when the owner asks.
+# It creates, renames and moves folders the owner approved by number. It opens no file,
+# writes no file into those folders, and deletes nothing. Every change is logged in the home.
+# ----------------------------------------------------------------------------
+
+LAYOUT_FILE = "layout.jsonl"
+LAYOUT_DEPTH = 2  # the top of the work folder and one level down, nothing deeper
+# Folders a synced drive is built from. The owner's home folder and the system's own folders are refused as a whole.
+SYSTEM_NAMES = {"my drive", "shared drives", "shared with me", "computers", "other computers"}
+FOLDERS_SECTION = """
+## Your folders
+
+The top level of `%s`, beside this workspace. Agents read documents there by path and write no file there.
+
+<!-- agent-workspace-setup:folders -->
+| Folder | What it holds |
+|---|---|
+<!-- /agent-workspace-setup:folders -->
+"""
+NUMBERS_HELP = [
+    "A folder takes two digits and a name, such as `30_Finance`. No two folders side by side share a number.",
+    "At the top, an inbox takes 00 and an archive 99. The AI home keeps its own number. The tens between are the owner's: "
+    "one for each part of their life or work.",
+    "One level down, folders take numbers inside the parent's ten: `31_Taxes` inside `30_Finance`.",
+    "The names are the owner's own words. Nothing deeper than two levels is touched.",
+]
+
+
+def work_folder(home):
+    """The folder the home sits in. Refused where the folders around the home belong to the system."""
+    base = home.root.parent
+    user = Path(os.path.realpath(str(Path.home())))
+    if base == user or base in user.parents or base.parent == base:
+        raise Refuse(
+            "The AI home sits directly in `%s`. The folders there belong to the system and to apps, so this skill "
+            "doesn't organize them." % tilde(base),
+            "Tell the owner. Folders can be organized where the AI home sits inside a folder of their own, such as a synced drive.",
+        )
+    return base
+
+
+def layout_record(home):
+    data = home.settings.get("layout")
+    return data if isinstance(data, dict) else {}
+
+
+def kept_names(home, extra=()):
+    return {str(name).replace("\\", "/").strip("/").lower() for name in list(layout_record(home).get("keep") or []) + list(extra or [])}
+
+
+def outside_private(home, path, extra=()):
+    """Whether a folder outside the home is one the owner called private: by its name, or by its recorded place."""
+    for pattern in list(home.settings.get("private", [])) + list(extra or []):
+        clean = str(pattern).replace("\\", "/").strip("/")
+        if not clean:
+            continue
+        spot = resolve_location(home, clean)
+        for folder in [path] + list(path.parents):
+            if folder == home.root.parent:
+                break
+            if folder == spot or folder.name.lower() == clean.lower() or fnmatch.fnmatch(folder.name.lower(), clean.lower()):
+                return True
+    return False
+
+
+def read_layout(home):
+    """The logged changes to the work folder, each with its state replayed."""
+    path = home.records / LAYOUT_FILE
+    entries, by_id = [], {}
+    if not path.is_file():
+        return entries
+    for line in read_text(path).splitlines():
+        with contextlib.suppress(ValueError):
+            record = json.loads(line)
+            if not isinstance(record, dict) or "id" not in record:
+                continue
+            if "op" in record:
+                by_id[record["id"]] = record
+                entries.append(record)
+            elif record["id"] in by_id:
+                by_id[record["id"]].update({key: value for key, value in record.items() if key != "id"})
+    return entries
+
+
+def settle_layout(home, base):
+    """Finish the bookkeeping of a change that was interrupted, from what is on disk."""
+    for entry in read_layout(home):
+        if entry.get("state") != "pending":
+            continue
+        target = base.joinpath(*entry["to"].split("/"))
+        source = base.joinpath(*entry["from"].split("/")) if entry.get("from") else None
+        done = target.exists() and (source is None or not source.exists())
+        append_line(home.records / LAYOUT_FILE, {"id": entry["id"], "state": "done" if done else "abandoned", "settled": iso()})
+
+
+def layout_parts(base, raw):
+    """A place inside the work folder as a tuple of names. Returns (parts, reason it can't be used)."""
+    text = str(raw or "").replace("\\", "/").strip()
+    if not text.strip("/"):
+        return None, "it names no folder"
+    path = Path(text).expanduser()
+    if path.is_absolute() or re.match(r"^[A-Za-z]:/", text):
+        try:
+            text = (Path(os.path.realpath(str(path.parent))) / path.name).relative_to(base).as_posix()
+        except ValueError:
+            return None, "it is outside the work folder"
+    parts = tuple(part for part in text.strip("/").split("/") if part)
+    if not parts or any(part in (".", "..") for part in parts):
+        return None, "it isn't a plain path inside the work folder"
+    if any(part.startswith(".") for part in parts):
+        return None, "hidden folders are left alone"
+    if len(parts) > LAYOUT_DEPTH:
+        return None, "it is more than two levels down"
+    return parts, ""
+
+
+def bad_folder_name(name):
+    if re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or name != name.strip() or name.endswith(".") or len(name) > 80:
+        return "`%s` isn't a name every computer accepts" % name
+    return ""
+
+
+class Shadow:
+    """The work folder as it would be after the changes so far. Nothing on disk changes."""
+
+    def __init__(self, base):
+        self.base, self.moves, self.made = base, [], set()
+
+    def origin(self, parts):
+        """Where these names are on disk today, as names; None when they would be gone."""
+        parts = tuple(parts)
+        for old, new in reversed(self.moves):
+            if parts[:len(new)] == new:
+                parts = old + parts[len(new):]
+            elif parts[:len(old)] == old:
+                return None
+        return parts
+
+    def real(self, parts):
+        origin = self.origin(parts)
+        return None if origin is None else self.base.joinpath(*origin)
+
+    def exists(self, parts):
+        origin = self.origin(parts)
+        if origin is None:
+            return False
+        real = self.base.joinpath(*origin)
+        return origin in self.made or real.exists() or os.path.islink(str(real))
+
+    def is_dir(self, parts):
+        origin = self.origin(parts)
+        if origin is None:
+            return False
+        real = self.base.joinpath(*origin)
+        return origin in self.made or (real.is_dir() and not os.path.islink(str(real)))
+
+    def now_at(self, origin):
+        parts = tuple(origin)
+        for old, new in self.moves:
+            if parts[:len(old)] == old:
+                parts = new + parts[len(old):]
+        return parts
+
+    def names(self, parent):
+        """The names inside a folder, as they would be."""
+        found = set()
+        real = self.real(parent) if parent else self.base
+        if real is not None and real.is_dir():
+            with contextlib.suppress(OSError):
+                found = {child.name for child in real.iterdir() if self.exists(tuple(parent) + (child.name,))}
+        for _, new in self.moves:
+            if new[:-1] == tuple(parent) and self.exists(new):
+                found.add(new[-1])
+        for origin in self.made:
+            spot = self.now_at(origin)
+            if spot[:-1] == tuple(parent):
+                found.add(spot[-1])
+        return found
+
+
+def layout_guard(home, base, shadow, parts, private, keep, moving):
+    """Why a place in the work folder may not be changed, or an empty string."""
+    shown = "/".join(parts)
+    real = shadow.real(parts) or base.joinpath(*parts)
+    if real == home.root or home.root in real.parents:
+        return "`%s` is the AI home, or inside it. The home is changed with its own commands." % shown
+    if moving and len(parts) == 1 and parts[0].lower() in SYSTEM_NAMES:
+        return "`%s` is part of how the synced drive is built." % shown
+    if any(part.lower() in kept_names(home, keep) for part in parts):
+        return "`%s` is on the keep list, so it stays as it is." % shown
+    if outside_private(home, real, private):
+        return "`%s` is private." % shown
+    if os.path.islink(str(real)):
+        return "`%s` is a link. Links are never moved." % shown
+    return ""
+
+
+def layout_change(home, base, shadow, raw, private, keep):
+    """Check one proposed change against the work folder as it would be. Returns (change, reason it is refused)."""
+    if not isinstance(raw, dict):
+        return None, "it isn't a change"
+    kinds = [key for key in ("create", "rename", "move") if raw.get(key)]
+    if len(kinds) != 1:
+        return None, "a change has exactly one of `create`, `rename` or `move`"
+    kind = kinds[0]
+    source, reason = layout_parts(base, raw[kind])
+    if reason:
+        return None, "`%s`: %s" % (raw[kind], reason)
+    if kind == "create":
+        target, source = source, None
+    elif kind == "rename":
+        name = str(raw.get("to") or "").strip().strip("/")
+        if not name or "/" in name or "\\" in name:
+            return None, "`rename` needs `to`: the new name, with no folder in front"
+        target = source[:-1] + (name,)
+    else:
+        into, reason = layout_parts(base, raw.get("into"))
+        if reason:
+            return None, "`move` needs `into`, a folder in the work folder: %s" % reason
+        target = into + (source[-1],)
+        if len(target) > LAYOUT_DEPTH:
+            return None, "`%s` would end up more than two levels down" % "/".join(target)
+        if into[:len(source)] == source:
+            return None, "a folder can't move into itself"
+        if not shadow.is_dir(into):
+            return None, "`%s` isn't a folder here" % "/".join(into)
+        blocked = layout_guard(home, base, shadow, into, private, keep, moving=False)
+        if blocked:
+            return None, blocked
+    for part in target:
+        if part.startswith(".") or bad_folder_name(part):
+            return None, bad_folder_name(part) or "hidden folders are left alone"
+    if source is not None:
+        if not shadow.exists(source):
+            return None, "`%s` isn't here" % "/".join(source)
+        blocked = layout_guard(home, base, shadow, source, private, keep, moving=True)
+        if blocked:
+            return None, blocked
+    blocked = layout_guard(home, base, shadow, target, private, keep, moving=False)
+    if blocked:
+        return None, blocked
+    if len(target) == 2 and not shadow.is_dir(target[:-1]):
+        return None, "`%s` isn't a folder here" % target[0]
+    if shadow.exists(target):
+        return None, "`%s` already exists" % "/".join(target)
+    if len(str(base.joinpath(*target))) > MAX_PATH:
+        return None, "the new path would be longer than %d characters" % MAX_PATH
+    notes = []
+    numbered = GROUP_RE.match(target[-1])
+    if numbered:
+        twins = [name for name in shadow.names(target[:-1]) if name != (source[-1] if source and source[:-1] == target[:-1] else None)
+                 and GROUP_RE.match(name) and GROUP_RE.match(name).group(1) == numbered.group(1)]
+        if twins:
+            return None, "`%s` would share the number %s with `%s`" % (target[-1], numbered.group(1), sorted(twins)[0])
+        parent = GROUP_RE.match(target[0]) if len(target) == 2 else None
+        if parent and numbered.group(1)[0] != parent.group(1)[0]:
+            notes.append("its number is outside the ten of `%s`" % target[0])
+    elif kind != "move":
+        notes.append("its name has no number")
+    is_dir = True if source is None else shadow.is_dir(source)
+    change = {"op": kind, "from": "/".join(source) if source else "", "to": "/".join(target), "dir": is_dir,
+              "about": " ".join(str(raw.get("about") or "").split()), "notes": notes}
+    if source is None:
+        shadow.made.add(target)
+    else:
+        shadow.moves.append((source, target))
+    return change, ""
+
+
+def layout_asked(raw):
+    """A proposed change in a few plain words, for a change that can't be done."""
+    if isinstance(raw, dict):
+        if raw.get("create"):
+            return "create `%s`" % raw["create"]
+        if raw.get("rename"):
+            return "rename `%s` to `%s`" % (raw["rename"], raw.get("to", ""))
+        if raw.get("move"):
+            return "move `%s` into `%s`" % (raw["move"], raw.get("into", ""))
+    return json.dumps(raw, ensure_ascii=False)[:120]
+
+
+def layout_line(change):
+    mark = "/" if change["dir"] else ""
+    if change["op"] == "create":
+        text = "Create `%s/`." % change["to"]
+    else:
+        text = "%s `%s%s`  →  `%s%s`." % ("Rename" if change["op"] == "rename" else "Move", change["from"], mark, change["to"], mark)
+    if change.get("notes"):
+        text += " Note: %s." % "; ".join(change["notes"])
+    return text
+
+
+def load_changes(path):
+    if not path:
+        raise Refuse("Give the changes file with --changes.", "Write the proposed changes as JSON, then run layout plan --changes <file>.")
+    try:
+        data = json.loads(read_text(path))
+    except OSError as error:
+        raise Refuse("Can't read the changes file `%s`: %s" % (path, error), "Write the changes file, then run the command again.")
+    except ValueError as error:
+        raise Refuse("The changes file `%s` isn't valid JSON: %s" % (path, error), "Fix the file, then run the command again.")
+    if not isinstance(data, dict) or not isinstance(data.get("changes", []), list):
+        raise Refuse("The changes file holds one JSON object with a `changes` list.",
+                     "Model: {\"changes\": [{\"create\": \"00_Inbox\"}, {\"rename\": \"Old name\", \"to\": \"30_New-name\", "
+                     "\"about\": \"one line\"}, {\"move\": \"Loose folder\", \"into\": \"99_Archive\"}], \"private\": [], \"keep\": []}")
+    for key in ("private", "keep"):
+        if not isinstance(data.get(key, []), list) or not all(isinstance(item, str) for item in data.get(key, [])):
+            raise Refuse("`%s` in the changes file must be a list of folder names." % key, "Fix the file, then run the command again.")
+    return data
+
+
+def top_folders(home, base, private=(), keep=()):
+    """The top level of the work folder: (name, what it is). Names only."""
+    rows = []
+    try:
+        children = sorted(base.iterdir(), key=lambda p: p.name.lower())
+    except OSError:
+        return rows
+    for child in children:
+        if child.name.startswith(".") or child.name in ("desktop.ini", "thumbs.db"):
+            continue
+        if child.is_symlink():
+            kind = "link"
+        elif not child.is_dir():
+            kind = "file"
+        elif child == home.root:
+            kind = "home"
+        elif outside_private(home, child, private):
+            kind = "private"
+        elif child.name.lower() in kept_names(home, keep) or child.name.lower() in SYSTEM_NAMES:
+            kind = "kept"
+        else:
+            kind = "folder"
+        rows.append((child, kind))
+    return rows
+
+
+def folders_table(home):
+    base = home.root.parent
+    about = layout_record(home).get("about") or {}
+    rows = ["| Folder | What it holds |", "|---|---|"]
+    for child, kind in top_folders(home, base):
+        if kind in ("file", "link"):
+            continue
+        if kind == "home":
+            line = "This workspace. Agent files live only here."
+        elif kind == "private":
+            line = "Private."
+        else:
+            line = str(about.get(child.name) or "")
+        rows.append("| `%s/` | %s |" % (cell(child.name), cell(line)))
+    return "\n".join(rows) + "\n"
+
+
+def stray_agent_files(home, base, limit=25):
+    """Agent files in the top two levels of the work folder, outside the home. Names only: no file is opened."""
+    found = []
+    for child, kind in top_folders(home, base):
+        if kind != "folder":
+            continue
+        folders = [child]
+        with contextlib.suppress(OSError):
+            folders += [inner for inner in sorted(child.iterdir()) if inner.is_dir() and not inner.is_symlink()
+                        and not inner.name.startswith(".") and not outside_private(home, inner)
+                        and inner.name.lower() not in kept_names(home)]
+        for folder in folders:
+            with contextlib.suppress(OSError):
+                for name in AGENT_FILES:
+                    if (folder / name).is_file():
+                        found.append(folder / name)
+        if len(found) >= limit:
+            break
+    return found[:limit]
+
+
+def layout_look(args, home, base):
+    out = Out()
+    inside = None
+    if args.inside:
+        parts, reason = layout_parts(base, args.inside)
+        if reason or len(parts) != 1 or not base.joinpath(*parts).is_dir():
+            raise Refuse("`%s` isn't a folder at the top of the work folder." % args.inside, "Run layout look to see the top level.")
+        blocked = layout_guard(home, base, Shadow(base), parts, args.private, args.keep, moving=False)
+        if blocked:
+            raise Refuse(blocked, "Ask the owner about another folder.")
+        inside = base.joinpath(*parts)
+    out.say("# %s" % ("Inside `%s/`" % inside.name if inside else "The folders beside the AI home"))
+    out.say()
+    out.say("Read-only: names, counts, sizes and dates. No file was opened.")
+    out.say()
+    out.say("Work folder: `%s`" % tilde(base))
+    out.say()
+    out.say("| Folder | What it is | Files | Size | Newest |")
+    out.say("|---|---|---|---|---|")
+    loose, used = 0, []
+    if inside is None:
+        rows = top_folders(home, base, args.private, args.keep)
+    else:
+        rows = [(child, "private" if outside_private(home, child, args.private) else
+                 ("link" if child.is_symlink() else ("folder" if child.is_dir() else "file")))
+                for child in sorted(inside.iterdir(), key=lambda p: p.name.lower()) if not child.name.startswith(".")]
+    for child, kind in rows:
+        if kind in ("file", "link"):
+            loose += 1
+            continue
+        numbered = GROUP_RE.match(child.name)
+        if numbered:
+            used.append(numbered.group(1))
+        if kind == "home":
+            out.say("| `%s/` | the AI home | | | |" % cell(child.name))
+        elif kind == "private":
+            out.say("| `%s/` | private, not opened | | | |" % cell(child.name))
+        elif kind == "kept":
+            out.say("| `%s/` | kept as it is | | | |" % cell(child.name))
+        else:
+            count, size, newest, capped = folder_stats(child, cap=3000)
+            stamp = dt.datetime.fromtimestamp(newest).strftime("%Y-%m-%d") if newest else ""
+            out.say("| `%s/` | %s | %s%s | %s | %s |" % (
+                cell(child.name), "numbered %s" % numbered.group(1) if numbered else "not numbered",
+                count, "+" if capped else "", human_size(size), stamp))
+    if not rows:
+        out.say("| Nothing here | | | | |")
+    out.say()
+    out.say("Loose files and links here, left alone: %d. Numbers in use: %s." % (loose, ", ".join(sorted(set(used))) or "none"))
+    if inside is None:
+        stray = stray_agent_files(home, base)
+        if stray:
+            out.say()
+            out.say("Agent files outside the AI home (names only): %s." % ", ".join(
+                "`%s`" % path.relative_to(base).as_posix() for path in stray))
+    out.say()
+    out.say("## How the numbers work")
+    out.say()
+    for line in NUMBERS_HELP:
+        out.say("- " + line)
+    return out.finish(
+        "Ask the owner what each folder is for, and which ones are private or belong to an app: those go into `private` and "
+        "`keep` in the changes file. Propose a layout in their own words. Write it as a changes file with your "
+        "file-writing tool, then run layout plan --changes <file>."
+    )
+
+
+def layout_plan(home, base, data):
+    """Every change in the file, checked in order against the folder as it would be. Returns (rows, shadow)."""
+    shadow, rows = Shadow(base), []
+    for raw in data.get("changes", []):
+        change, reason = layout_change(home, base, shadow, raw, data.get("private", []), data.get("keep", []))
+        rows.append({"change": change, "reason": reason, "raw": raw})
+    return rows, shadow
+
+
+def layout_plan_out(args, home, base):
+    data = load_changes(args.changes)
+    rows, shadow = layout_plan(home, base, data)
+    out = Out()
+    out.say("# Layout plan: nothing was changed")
+    out.say()
+    out.say("Work folder: `%s`" % tilde(base))
+    out.say()
+    if not rows:
+        out.say("The changes file lists no change.")
+    for index, row in enumerate(rows, 1):
+        if row["change"]:
+            out.say("%d. %s" % (index, layout_line(row["change"])))
+        else:
+            out.say("%d. Not possible: %s. %s." % (index, layout_asked(row["raw"]), row["reason"].rstrip(".").capitalize()
+                                                   if not row["reason"].startswith("`") else row["reason"].rstrip(".")))
+    for key, label in (("private", "Private, never opened or moved"), ("keep", "Kept as they are")):
+        if data.get(key):
+            out.say()
+            out.say("%s: %s." % (label, ", ".join("`%s`" % name for name in data[key])))
+    out.say()
+    out.say("After every change above, the top level would hold: %s." % (", ".join("`%s`" % name for name in sorted(
+        name for name in shadow.names(()) if not name.startswith("."))) or "nothing"))
+    out.say()
+    out.say("Each change is logged in the AI home, and layout undo reverses the last rename or move. No file is opened, "
+            "no file is written into these folders, and nothing is deleted.")
+    return out.finish(
+        "Show this list to the owner exactly as numbered and ask which numbers to do. Then stop. After their answer, run "
+        "layout apply --changes <file> --only <the numbers> --dry-run, then the same without --dry-run."
+    )
+
+
+def layout_apply(args, home, base):
+    data = load_changes(args.changes)
+    count = len(data.get("changes", []))
+    wanted = str(args.only or "").strip().lower()
+    if not wanted:
+        raise Refuse("layout apply needs --only with the numbers the owner approved, such as --only 1,3.",
+                     "Ask the owner which numbers to do. `--only all` does every one.")
+    if wanted == "all":
+        numbers = list(range(1, count + 1))
+    else:
+        try:
+            numbers = sorted({int(piece) for piece in re.split(r"[,\s]+", wanted) if piece})
+        except ValueError:
+            raise Refuse("`--only %s` isn't a list of numbers." % args.only, "Use the numbers from layout plan, such as --only 1,3.")
+        if not numbers or numbers[0] < 1 or numbers[-1] > count:
+            raise Refuse("The plan has changes 1 to %d. `--only %s` names one outside that." % (count, args.only),
+                         "Run layout plan again and use its numbers.")
+    out = Out()
+    shadow, ready, stopped = Shadow(base), [], None
+    for number in numbers:
+        change, reason = layout_change(home, base, shadow, data["changes"][number - 1], data.get("private", []), data.get("keep", []))
+        if reason:
+            stopped = (number, reason)
+            break
+        ready.append((number, change))
+    out.say("# Layout%s" % (" (dry run): nothing was changed" if args.dry_run else ""))
+    out.say()
+    if args.dry_run:
+        for number, change in ready:
+            out.say("%d. %s" % (number, layout_line(change)))
+        if stopped:
+            out.say("%d. Not possible: %s." % (stopped[0], stopped[1].rstrip(".")))
+            return out.finish("Tell the owner why that number can't be done, and ask what they want instead. "
+                              "A change can depend on an earlier number, such as the folder it moves into.", 1)
+        return out.finish("These are the numbers the owner approved. Run the same command without --dry-run.")
+    done, refused = [], False
+    with lock(home):
+        settle_layout(home, base)
+        next_id = max([entry["id"] for entry in read_layout(home)] + [0]) + 1
+        about = dict(layout_record(home).get("about") or {})
+        documents = list(home.settings.get("documents", []))
+        for number, change in ready:
+            source = base.joinpath(*change["from"].split("/")) if change["from"] else None
+            target = base.joinpath(*change["to"].split("/"))
+            if target.exists() or os.path.islink(str(target)) or (source is not None and not source.exists()):
+                stopped = (number, "the folders changed since the plan was checked")
+                break
+            if source is not None and os.stat(str(source)).st_dev != os.stat(str(target.parent)).st_dev:
+                stopped = (number, "the move would cross to another drive")
+                break
+            entry = {"id": next_id, "op": change["op"], "from": change["from"], "to": change["to"], "state": "pending",
+                     "time": iso(), "host": host()}
+            pairs = []
+            if source is not None:
+                for index, recorded in enumerate(documents):
+                    spot = resolve_location(home, recorded)
+                    if spot == source or source in spot.parents:
+                        moved = record_location(home, str(target / spot.relative_to(source)))
+                        if moved and moved != recorded:
+                            pairs.append([recorded, moved])
+                            documents[index] = moved
+                if pairs:
+                    entry["documents"] = pairs
+            append_line(home.records / LAYOUT_FILE, entry)
+            try:
+                if source is None:
+                    target.mkdir()
+                else:
+                    os.rename(str(source), str(target))
+            except OSError as error:  # a sandbox or a permission said no: nothing moved
+                append_line(home.records / LAYOUT_FILE, {"id": next_id, "state": "abandoned", "settled": iso()})
+                documents = [dict((new, old) for old, new in pairs).get(recorded, recorded) for recorded in documents]
+                stopped, refused = (number, "the system refused it (%s)" % (error.strerror or type(error).__name__)), True
+                break
+            append_line(home.records / LAYOUT_FILE, {"id": next_id, "state": "done"})
+            next_id += 1
+            if source is not None and "/" not in change["from"] and change["from"] in about:
+                line = about.pop(change["from"])
+                if "/" not in change["to"]:
+                    about[change["to"]] = line
+            if change["about"] and "/" not in change["to"]:
+                about[change["to"]] = change["about"]
+            done.append((number, change, pairs))
+        for name, line in (data.get("about") or {}).items() if isinstance(data.get("about"), dict) else []:
+            if isinstance(line, str) and (base / str(name)).is_dir() and base / str(name) != home.root:
+                about[str(name)] = " ".join(line.split())
+        keep = sorted(set(list(layout_record(home).get("keep") or []) + list(data.get("keep", []))), key=str.lower)
+        private = list(home.settings.get("private", []))
+        private += [name for name in data.get("private", []) if name not in private]
+
+        def record(recorded):
+            recorded["layout"] = {"about": about, "keep": keep}
+            recorded["private"] = private
+            recorded["documents"] = documents
+
+        save_settings(home, record)
+        readme = home.root / "README.md"
+        if readme.is_file() and "agent-workspace-setup:folders" not in read_text(readme):
+            with open(readme, "a", encoding="utf-8", newline="\n") as handle:
+                handle.write(("" if read_text(readme).endswith("\n") else "\n") + FOLDERS_SECTION % base.name)
+        _, map_message = refresh_map(home, State(home), write=True)
+    for number, change, pairs in done:
+        out.say("%d. Done. %s" % (number, layout_line(change)))
+        for old, new in pairs:
+            out.say("   The settings now give the document folder `%s` as `%s`." % (old, new))
+    if not done:
+        out.say("Nothing was changed.")
+    if stopped:
+        out.say("%d. Not done: %s. The numbers after it were left too." % (stopped[0], stopped[1].rstrip(".")))
+    out.say()
+    out.say(map_message)
+    if refused:
+        return out.finish('Tell the owner what was done and that the system refused the rest. This tool may not be allowed to change folders outside the folder the session started in. The owner can allow this one command, or start a session in the work folder. Never switch a sandbox or a permission check off yourself.', 1)
+    if stopped:
+        return out.finish("Tell the owner what was done and why number %d wasn't. layout undo reverses the last rename or move." % stopped[0], 1)
+    return out.finish(
+        "Tell the owner what changed. layout undo reverses the last rename or move. Then run check: it lists any "
+        "hand-off or README that still names a folder by its old place."
+    )
+
+
+def layout_undo(args, home, base):
+    out = Out()
+    with lock(home):
+        settle_layout(home, base)
+        last = [entry for entry in read_layout(home) if entry.get("state") == "done" and entry.get("op") in ("rename", "move")]
+        if not last:
+            out.say("There is no rename or move to undo. A folder that was created empty stays: the owner can remove it.")
+            return out.finish("Nothing to do.")
+        entry = last[-1]
+        current, original = base.joinpath(*entry["to"].split("/")), base.joinpath(*entry["from"].split("/"))
+        reasons = []
+        if not current.exists() or os.path.islink(str(current)):
+            reasons.append("`%s` isn't here any more." % entry["to"])
+        if original.exists() or os.path.islink(str(original)):
+            reasons.append("`%s` exists again." % entry["from"])
+        if not original.parent.is_dir():
+            reasons.append("`%s` isn't here." % "/".join(entry["from"].split("/")[:-1]))
+        if reasons:
+            raise Refuse("The last change can't be undone, so both places were left as they are:\n" + bullets(reasons),
+                         "Tell the owner why, and ask what they want instead.")
+        mark = "/" if current.is_dir() else ""
+        if args.dry_run:
+            out.say("# Layout undo (dry run): nothing was changed")
+            out.say()
+            out.say("`%s%s`  →  `%s%s`" % (entry["to"], mark, entry["from"], mark))
+            return out.finish("Show this to the owner. When they approve, run layout undo without --dry-run.")
+        try:
+            os.rename(str(current), str(original))
+        except OSError as error:
+            raise Refuse("The system refused the undo (%s), so both places were left as they are." % (error.strerror or type(error).__name__),
+                         'Tell the owner that the system refused it. This tool may not be allowed to change folders outside the folder the session started in. The owner can allow this one command, or start a session in the work folder. Never switch a sandbox or a permission check off yourself.')
+        append_line(home.records / LAYOUT_FILE, {"id": entry["id"], "state": "undone", "undone": iso()})
+        about = dict(layout_record(home).get("about") or {})
+        if "/" not in entry["to"] and entry["to"] in about:
+            line = about.pop(entry["to"])
+            if "/" not in entry["from"]:
+                about[entry["from"]] = line
+        back = {new: old for old, new in entry.get("documents") or []}
+        documents = [back.get(recorded, recorded) for recorded in home.settings.get("documents", [])]
+
+        def record(recorded):
+            recorded["layout"] = dict(layout_record(home), about=about)
+            recorded["documents"] = documents
+
+        save_settings(home, record)
+        _, map_message = refresh_map(home, State(home), write=True)
+    out.say("# Layout undo done")
+    out.say()
+    out.say("`%s%s`  →  `%s%s`" % (entry["to"], mark, entry["from"], mark))
+    out.say(map_message)
+    return out.finish("Tell the owner the %s was undone." % entry["op"])
+
+
+def layout_keep(args, home, base):
+    name = str(args.name or "").replace("\\", "/").strip().strip("/")
+    if not name or "/" in name:
+        raise Refuse("Give one folder name from the top of the work folder.", "Run layout look to see the names.")
+    out = Out()
+    if name.lower() in kept_names(home):
+        out.say("`%s` is already on the keep list." % name)
+        return out.finish("Nothing to do.")
+    if args.dry_run:
+        out.say("# Keep (dry run): nothing was written")
+        out.say()
+        out.say("`%s` would go on the keep list: the skill never renames it, moves it or looks inside it." % name)
+        return out.finish("Show this to the owner. When they approve, run the same command without --dry-run.")
+    keep = sorted(set(list(layout_record(home).get("keep") or []) + [name]), key=str.lower)
+    with lock(home):
+        save_settings(home, lambda recorded: recorded.__setitem__("layout", dict(layout_record(home), keep=keep)))
+    out.say("`%s` is on the keep list. The skill never renames it, moves it or looks inside it." % name)
+    return out.finish("Tell the owner.")
+
+
+def cmd_layout(args):
+    home = open_home(args)
+    base = work_folder(home)
+    if args.action == "look":
+        return layout_look(args, home, base)
+    if args.action == "plan":
+        return layout_plan_out(args, home, base)
+    if args.action == "apply":
+        return layout_apply(args, home, base)
+    if args.action == "undo":
+        return layout_undo(args, home, base)
+    return layout_keep(args, home, base)
+
+
+# ----------------------------------------------------------------------------
+# review, file and snapshot: tidy-up the owner approves by number
+# ----------------------------------------------------------------------------
+
+REVIEW_LIMIT = 30
+ASK_RULES = ("HND011", "HND013", "HND014")
+
+
+def proposals(home, findings, rows):
+    """Changes the owner can approve by number, built from the check's findings. Reads names only; changes nothing."""
+    def number_of(path):
+        return next((row["number"] for row in rows if path == row["path"] or path.startswith(row["path"] + "/")), None)
+
+    broken, commands, tidy, fixes, asks = [], [], {}, [], []
+    for finding in findings:
+        rule, path, message = finding["rule"], finding["path"], finding["message"]
+        number, where = number_of(path), label(rows, path)
+        if finding["severity"] == "error":
+            broken.append({"what": "Fix an error. %s: %s" % (where, message), "how": finding["fix"]})
+        elif rule == "STS001" and number:
+            commands.append({"what": "Archive %s. %s" % (where, message), "how": "`archive %s --dry-run`, then for real." % number})
+        elif rule == "ARC001":
+            commands.append({"what": "Move folders out of the old archive. %s" % message,
+                             "how": "`archive <number> --dry-run` for each, then for real."})
+        elif rule == "INB001":
+            inbox = groups_on_disk(home)[0].get(home.group_no(0))
+            names = sorted(child.name for child in inbox.iterdir() if not child.name.startswith(".")) if inbox else []
+            for name in names[:12]:
+                commands.append({"what": "File `%s` from the Inbox." % name,
+                                 "how": "Ask which work folder, then `file \"%s\" --to <number> --dry-run`." % name})
+            if len(names) > 12:
+                commands.append({"what": "File %d more Inbox items." % (len(names) - 12), "how": "Run review again after these."})
+        elif rule == "INB002":
+            continue  # the Inbox items are already listed one by one
+        elif rule == "MAP003":
+            commands.append({"what": "Refresh the map in `README.md`.", "how": "`map --dry-run`, then for real."})
+        elif rule == "VER001":
+            commands.append({"what": "Bring this workspace's rules up to this version of the skill.",
+                             "how": "`upgrade --dry-run`, then for real."})
+        elif rule in TIDY_RULES and number:
+            tidy.setdefault(number, {"where": where, "why": []})["why"].append(message)
+        elif rule in ASK_RULES:
+            asks.append({"what": "Ask the owner. %s: %s" % (where, message), "how": finding["fix"]})
+        else:
+            fixes.append({"what": "%s: %s" % (where, message), "how": finding["fix"]})
+    edits = [{"what": "Tidy the hand-off of %s. %s" % (entry["where"], " ".join(entry["why"])),
+              "how": "`snapshot %s`. Then rebuild Current state from the Session log, and take Next actions from what the "
+                     "owner says. Show the before and after, and write after the OK." % number}
+             for number, entry in sorted(tidy.items())]
+    return broken + commands + edits + fixes + asks
+
+
+def cmd_review(args):
+    home = open_home(args)
+    findings, rows = run_check(home)
+    items = proposals(home, findings, rows)
+    out = Out()
+    out.say("# Review · %s" % iso())
+    out.say()
+    out.say("Read-only. Nothing was changed.")
+    out.say()
+    if not items:
+        out.say("Nothing to propose.")
+        return out.finish("Tell the owner in one line. Then work on the next actions.")
+    out.say("%d proposed change%s. The owner approves by number." % (len(items), "" if len(items) == 1 else "s"))
+    out.say()
+    for index, item in enumerate(items[:REVIEW_LIMIT], 1):
+        out.say("%d. %s **How:** %s" % (index, item["what"], item["how"] or "Ask the owner."))
+    if len(items) > REVIEW_LIMIT:
+        out.say()
+        out.say("And %d more. Run review again after these." % (len(items) - REVIEW_LIMIT))
+    if any("from the Inbox" in item["what"] for item in items):
+        live = ["%s %s" % (row["number"], row["title"]) for row in rows if not row["archived"]]
+        out.say()
+        out.say("Work folders an Inbox item can go to: %s." % (" · ".join(live[:20]) or "none yet"))
+    return out.finish(
+        "Show this list to the owner exactly as numbered, and ask which numbers to do. Then stop. Do only the numbers "
+        "they approve: each move gets its own dry run first, and each edit is shown before it is written. "
+        "Everything they don't approve stays as it is."
+    )
+
+
+def cmd_file(args):
+    home = open_home(args)
+    state = State(home)
+    stop_on_blockers(state, "file an Inbox item")
+    inbox = state.groups.get(home.group_no(0))
+    if inbox is None:
+        raise Refuse("This workspace has no Inbox folder.", "Run setup again: it adds only what is missing.")
+    name = args.item.strip().replace("\\", "/").strip("/")
+    if name.startswith(inbox.name + "/"):
+        name = name[len(inbox.name) + 1:]
+    source = inbox / name
+    if not name or "/" in name or name.startswith(".") or not (source.exists() or os.path.islink(str(source))):
+        raise Refuse("`%s` isn't an item directly in `%s/`." % (args.item, inbox.name),
+                     "Run review to list the Inbox items by name.")
+    item, _ = state.find(args.to)
+    if item["archived"]:
+        raise Refuse("%s is in the archive." % item["number"], "Run restore first, or ask the owner for another work folder.")
+    target = item["path"] / name
+    reasons = check_move(home, source, target, files=True)
+    if reasons:
+        raise Refuse("Nothing was moved:\n" + bullets(reasons), "Tell the owner why, and ask what they want instead.")
+    src_rel, dst_rel = home.rel(source), home.rel(target)
+    out = Out()
+    if args.dry_run:
+        out.say("# File (dry run): nothing was changed")
+        out.say()
+        out.say("`%s`  →  `%s`" % (src_rel, dst_rel))
+        out.say("The item is moved as it is. It isn't opened.")
+        return out.finish("Show this to the owner. When they approve, run the same command without --dry-run.")
+    with lock(home):
+        settle_moves(home)
+        moves, _ = read_moves(home)
+        move_id = max([move["id"] for move in moves] + [0]) + 1
+        append_line(home.records / MOVES_FILE, {
+            "id": move_id, "op": "file", "number": item["number"], "key": "", "from": src_rel, "to": dst_rel,
+            "state": "pending", "time": iso(), "host": host(),
+        })
+        os.rename(str(source), str(target))
+        append_line(home.records / MOVES_FILE, {"id": move_id, "state": "done"})
+    out.say("# File done")
+    out.say()
+    out.say("`%s`  →  `%s`" % (src_rel, dst_rel))
+    return out.finish("Tell the owner. undo reverses it. Then add a Session log line to %s's %s saying what was filed."
+                      % (item["number"], home.handoff))
+
+
+def cmd_snapshot(args):
+    home = open_home(args)
+    state = State(home)
+    item, _ = state.find(args.number)
+    source = item["path"] / home.handoff
+    if not source.is_file():
+        raise Refuse("%s has no `%s` to keep a copy of." % (item["number"], home.handoff), "Run check to see what is there.")
+    folder = home.records / SNAPSHOT_DIR / item["number"]
+    stamp = now().strftime("%Y%m%d-%H%M%S")
+    target, extra = folder / ("%s-%s" % (stamp, home.handoff)), 1
+    while target.exists():
+        extra += 1
+        target = folder / ("%s-%d-%s" % (stamp, extra, home.handoff))
+    out = Out()
+    if args.dry_run:
+        out.say("# Snapshot (dry run): nothing was written")
+        out.say()
+        out.say("`%s`  →  a copy at `%s`" % (home.rel(source), home.rel(target)))
+        return out.finish("Run the same command without --dry-run before you rewrite the hand-off.")
+    folder.mkdir(parents=True, exist_ok=True)
+    with open(target, "xb") as handle:
+        handle.write(source.read_bytes())
+    out.say("# Snapshot kept")
+    out.say()
+    out.say("A copy of `%s` as it is now: `%s`." % (home.rel(source), home.rel(target)))
+    return out.finish("Now make the approved change to the hand-off. To take it back, copy this file over the hand-off "
+                      "with the owner's OK. Tell the owner where the copy is.")
+
+
+# ----------------------------------------------------------------------------
+# group: the groups of a home, and the one line that says what goes in each
+# ----------------------------------------------------------------------------
+
+def all_group_entries(home, state):
+    """The settings' list of groups, made complete: what is recorded, plus a line for each group on disk that has none."""
+    lines = home.group_lines()
+    entries = []
+    for number in sorted(set(lines) | set(state.groups)):
+        if number == home.group_no(9):
+            continue
+        if number in lines:
+            entries.append(dict(lines[number]))
+            continue
+        info = home.group_info(number)
+        match = GROUP_RE.match(state.groups[number].name)
+        entry = {"number": number, "name": match.group(2) if match else state.groups[number].name, "about": info["about"]}
+        if number != home.group_no(0):
+            entry["work"] = info["work"]
+            if info["kind"]:
+                entry["kind"] = info["kind"]
+        entries.append(entry)
+    return entries
+
+
+def cmd_group(args):
+    home = open_home(args)
+    state = State(home)
+    out = Out()
+    inbox, old = home.group_no(0), home.group_no(9)
+    if args.action == "list":
+        out.say("# Groups")
+        out.say()
+        out.say("Read-only. Nothing was written.")
+        out.say()
+        out.say("| Number | Folder | What goes there | Its work |")
+        out.say("|---|---|---|---|")
+        for number, path in sorted(state.groups.items()):
+            if home.is_private(home.rel(path)):
+                out.say("| %d | `%s/` | Private. | |" % (number, cell(path.name)))
+                continue
+            info = home.group_info(number)
+            work = "" if number in (inbox, old) else info["work"]
+            out.say("| %d | `%s/` | %s | %s |" % (number, cell(path.name), cell(info["about"]), work))
+        return out.finish(
+            "File new work with new --title \"<Title>\" --group \"<name or number>\" --dry-run. "
+            "To add a group: group add --name \"<Name>\" --about \"<one line>\" --dry-run."
+        )
+    stop_on_blockers(state, "change a group")
+    about = " ".join((args.about or "").split())
+    work = (args.work or "").strip().lower()
+    if work and work not in GROUP_WORK:
+        raise Refuse("`--work` must be finishes or ongoing.", "Ask the owner whether work in this group finishes or goes on.")
+    if args.action == "add":
+        if not (args.name or "").strip() or not about:
+            raise Refuse("A new group needs --name and --about: one line on what goes there.",
+                         "Ask the owner for both, then run group add again with --dry-run.")
+        name = slug(args.name)
+        for path in state.groups.values():
+            match = GROUP_RE.match(path.name)
+            if match and match.group(2).lower() == name.lower():
+                raise Refuse("There is already a group named `%s`." % path.name, "Run group list to see the groups.")
+        used = set(state.groups) | set(home.group_lines())
+        free = [home.number + offset for offset in OWN_OFFSETS if home.number + offset not in used]
+        if not free:
+            raise Refuse("This home already has %d groups besides the Inbox, and that is all its numbers allow." % len(OWN_OFFSETS),
+                         "Ask the owner which existing group the work fits.")
+        number = free[0]
+        folder = "%d%s%s" % (number, home.sep, name)
+        target = home.root / folder
+        if target.exists():
+            raise Refuse("`%s` already exists." % folder, "Run check, then pick another name.")
+        entry = {"number": number, "name": name, "about": about, "work": work or "ongoing"}
+        lines = ["`%s/`  AGENTS.md, CLAUDE.md  (new)" % folder, "- What goes there: %s" % about,
+                 "- Its work: %s" % entry["work"]]
+        if args.dry_run:
+            out.say("# New group (dry run): nothing was written")
+            out.say()
+            for line in lines:
+                out.say(line)
+            return out.finish("Show this to the owner. When they approve, run the same command without --dry-run.")
+        with lock(home):
+            entries = all_group_entries(home, state) + [entry]
+            target.mkdir()
+            with_new = dict(state.groups)
+            with_new[number] = target
+            context = dict(home_context(home, with_new), TITLE=folder)
+            write_new(target / "AGENTS.md", render("group-AGENTS.md", context))
+            write_new(target / "CLAUDE.md", render("home-CLAUDE.md", context))
+            save_settings(home, lambda recorded: recorded.__setitem__("groups", sorted(entries, key=lambda e: e["number"])))
+            _, map_message = refresh_map(home, State(home), write=True)
+        out.say("# New group: %s" % folder)
+        out.say()
+        for line in lines:
+            out.say(line.replace("  (new)", ""))
+        out.say()
+        out.say(map_message)
+        return out.finish("Tell the owner. File work into it with new --title \"<Title>\" --group \"%s\" --dry-run." % name)
+    if not args.target:
+        raise Refuse("Say which group: its number or its name.", "Run group list to see the groups.")
+    number = find_group(home, {n: path.name for n, path in state.groups.items() if n != old}, args.target)
+    if not about and not work:
+        raise Refuse("Nothing to change: give --about, --work or both.", "Ask the owner for the new line.")
+    if number == inbox and work:
+        raise Refuse("The Inbox holds no work folders, so --work doesn't apply to it.", "Run it again with --about only.")
+    info = home.group_info(number)
+    new_about, new_work = about or info["about"], work or info["work"]
+    folder = state.groups[number].name
+    if new_about == info["about"] and (number == inbox or new_work == info["work"]):
+        out.say("`%s/` already says that." % folder)
+        return out.finish("Nothing to do.")
+    lines = ["`%s/`" % folder, "- What goes there: %s" % new_about]
+    if number != inbox:
+        lines.append("- Its work: %s" % new_work)
+    if args.dry_run:
+        out.say("# Group line (dry run): nothing was written")
+        out.say()
+        out.say("Now: %s" % info["about"])
+        out.say()
+        for line in lines:
+            out.say(line)
+        return out.finish("Show this to the owner. When they approve, run the same command without --dry-run.")
+    with lock(home):
+        entries = all_group_entries(home, state)
+        for entry in entries:
+            if entry["number"] == number:
+                entry["about"] = new_about
+                if number != inbox:
+                    entry["work"] = new_work
+        save_settings(home, lambda recorded: recorded.__setitem__("groups", entries))
+        _, map_message = refresh_map(home, State(home), write=True)
+    out.say("# Group line changed")
+    out.say()
+    for line in lines:
+        out.say(line)
+    out.say()
+    out.say(map_message)
+    return out.finish("Tell the owner. The map in `README.md` shows the new line.")
+
+
+# ----------------------------------------------------------------------------
 # upgrade: bring a workspace that already exists up to this version of the skill
 # ----------------------------------------------------------------------------
 
@@ -3297,6 +4599,8 @@ def cmd_upgrade(args):
         if missing and "agent-workspace-setup:rules-%s " % step["version"] not in text:
             sections.append(rules_section(home, state, step["version"], missing, step.get("note", "")))
     settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
+    brief_path = home.root / BRIEF_FILE
+    add_brief = not brief_path.exists() and any(step["version"] == "0.5.0" for step in pending)
     out.say("# Upgrade to version %s%s" % (this, " (dry run): nothing was written" if args.dry_run else ""))
     out.say()
     out.say("This workspace was set up with version %s of the skill." % have)
@@ -3313,6 +4617,8 @@ def cmd_upgrade(args):
         out.say("- `AGENTS.md`: the section below is added at the end. Nothing else in the file changes.")
     else:
         out.say("- `AGENTS.md`: nothing. It needs no new rule.")
+    if add_brief:
+        out.say("- `%s`: a new file at the top of the workspace. It tells any agent how to brief the owner." % BRIEF_FILE)
     out.say("- `%s`: the recorded version becomes %s." % (settings_rel, this))
     out.say("- Nothing else. No hand-off, no work folder and no number is touched.")
     if sections:
@@ -3321,13 +4627,16 @@ def cmd_upgrade(args):
         out.say("\n".join(sections).rstrip("\n"))
         out.say("```")
     if args.dry_run:
-        return out.finish("Tell the owner what's new in plain words, and show them the exact text for `AGENTS.md`. "
+        return out.finish("Tell the owner what's new in plain words. Then copy the block between the ``` marks into your reply as "
+                          "it is: that is the exact text for `AGENTS.md`, and a summary of it is not enough. "
                           "When they approve, run upgrade without --dry-run.")
     with lock(home):
         if sections:
             gap = "" if text.endswith("\n\n") else ("\n" if text.endswith("\n") or not text else "\n\n")
             with open(rules_path, "a", encoding="utf-8", newline="\n") as handle:
                 handle.write(gap + "\n".join(sections))
+        if add_brief:
+            write_new(brief_path, render("home-BRIEF.md", home_context(home, state.groups)))
         save_settings(home, lambda recorded: recorded.update(skill_version=this))
     return out.finish("Tell the owner what changed. Some tools read the rules only when they start, "
                       "so they should restart those tools.")
@@ -3363,7 +4672,8 @@ def build_parser():
 
     sub = add("new", cmd_new, "Add one numbered work folder.", dry_run=True)
     sub.add_argument("--title", required=True)
-    sub.add_argument("--kind", default="project", choices=sorted(KINDS))
+    sub.add_argument("--kind", choices=sorted(KINDS), help="project (the default), area or data")
+    sub.add_argument("--group", help="the group it goes in, by number or name; for a home with its own groups")
     sub.add_argument("--purpose")
     sub.add_argument("--status")
     sub.add_argument("--documents", action="append", help="a document folder this work reads; it stays where it is")
@@ -3385,7 +4695,7 @@ def build_parser():
 
     sub = add("move", cmd_move, "Move a work folder to another group. It keeps its number.", dry_run=True)
     sub.add_argument("number")
-    sub.add_argument("--to", required=True, help="project, area, data, or a group number")
+    sub.add_argument("--to", required=True, help="project, area, data, or a group's number or name")
 
     sub = add("archive", cmd_archive, "Move closed work into its group's archive. It keeps its number.", dry_run=True)
     sub.add_argument("number")
@@ -3397,7 +4707,8 @@ def build_parser():
 
     sub = add("adopt", cmd_adopt, "Bring a folder that is already inside the home into a numbered group.", dry_run=True)
     sub.add_argument("path", help="the folder, relative to the home")
-    sub.add_argument("--kind", default="project", choices=sorted(KINDS))
+    sub.add_argument("--kind", choices=sorted(KINDS), help="project (the default), area or data")
+    sub.add_argument("--group", help="the group it goes in, by number or name")
     sub.add_argument("--title")
     sub.add_argument("--purpose")
     sub.add_argument("--by", default=SKILL + " skill")
@@ -3425,6 +4736,32 @@ def build_parser():
 
     add("upgrade", cmd_upgrade, "After the skill was updated: say what's new, and add new rules to this workspace.",
         dry_run=True)
+
+    sub = add("layout", cmd_layout, "Optional: organize the folders beside the AI home. Only numbers the owner approved are done.",
+              dry_run=True)
+    sub.add_argument("action", choices=["look", "plan", "apply", "undo", "keep"])
+    sub.add_argument("name", nargs="?", help="for keep: a top-level folder the skill must leave as it is")
+    sub.add_argument("--changes", help="for plan and apply: the JSON file of proposed changes")
+    sub.add_argument("--only", help="for apply: the numbers the owner approved, such as 1,3, or all")
+    sub.add_argument("--inside", help="for look: one top-level folder, to see the level below it")
+    sub.add_argument("--private", action="append", help="for look: a folder the owner calls private")
+    sub.add_argument("--keep", action="append", help="for look: a folder that belongs to an app, or must stay as it is")
+
+    add("review", cmd_review, "A numbered list of proposed changes, for the owner to approve by number. Writes nothing.")
+
+    sub = add("file", cmd_file, "Move one item from the Inbox into a work folder. undo reverses it.", dry_run=True)
+    sub.add_argument("item", help="the item's name in the Inbox")
+    sub.add_argument("--to", required=True, help="the work folder's number, such as 91.01")
+
+    sub = add("snapshot", cmd_snapshot, "Keep a copy of a work folder's hand-off before it is rewritten.", dry_run=True)
+    sub.add_argument("number")
+
+    sub = add("group", cmd_group, "List the groups, add one, or change the line that says what goes in one.", dry_run=True)
+    sub.add_argument("action", choices=["list", "add", "describe"])
+    sub.add_argument("target", nargs="?", help="for describe: the group's number or name")
+    sub.add_argument("--name", help="for add: the new group's name")
+    sub.add_argument("--about", help="one line on what goes in the group")
+    sub.add_argument("--work", help="finishes or ongoing")
 
     sub = add("routine", cmd_routine, "Optional scheduled check: plan, run, status, record, switch, remove, offer.", dry_run=True)
     sub.add_argument("action", choices=["plan", "run", "status", "record", "switch", "remove", "offer"])

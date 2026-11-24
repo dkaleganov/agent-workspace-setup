@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.5.0
+
+- **The hand-off is never copied.** The rules now say the six standard files are updated in place, and the check flags a second copy such as `HANDOFF_v2.md`. A cheaper model can read "save a new version as `_v2`" too broadly, and the next session would then read a stale hand-off.
+- **Checks for shape:** Session log lines dated and newest first, and decision entries that start with a number or a date.
+- **Naming that sorts:** dated files start with the date, a recurring series is one work folder, and a list of similar things is one table.
+- **Two rules for agents:** use only paths a command printed or you gave, and install with the skill's own installer, never an app's "import skill" feature.
+- **Your own groups.** Setup now asks first whether you want our groups or your own, with one line on what goes in each. Agents file new work by those lines, and the map shows them. "Add a group" makes one later. A workspace that already exists keeps its groups.
+- **Review by number.** "Review my workspace" gives one numbered list of proposed changes. You answer with numbers, and only those are done.
+- **Sort the Inbox.** An Inbox item is moved into the work folder you name, unopened. The move is logged, and "undo" reverses it.
+- **A copy before a tidy-up.** Before an agent rewrites a hand-off, a copy of the old one is kept in the workspace's records.
+- **`BRIEF.md`.** A short file at the top of the workspace tells any agent how to brief you, with or without this skill. "Upgrade my workspace" adds it.
+- **`FACTS.md`, when you need it.** Facts that outlive a task go in one file in the work folder, each with its source and date. The check flags a line that has neither.
+- **A check for piles of versions:** three or more versions of one file in a work folder.
+- **Help with your other folders, if you want it.** Setup now asks whether you want only an AI home, or also help organizing the folders beside it. "Organize my folders" looks at names, proposes a numbered layout in your words, and makes only the changes you approve by number. It opens no file, writes no file there, deletes nothing, and can undo a rename or a move.
+- **Clearer rules for cheaper models,** found by running every test on a mid-tier model: change the structure only through the skill, the session you are talking to is the one that writes the hand-off, and a request for a daily check is not yet a yes to a scheduled job.
+
 ## 0.4.0
 
 - **A written order for what wins.** When two files disagree, the rules now say which one an agent works from: your word now, then the newest decision, then the hand-off, then the README. The agent must flag the conflict with a line that starts `Conflict:`, and ask you.

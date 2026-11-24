@@ -17,14 +17,14 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.4.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.5.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
 
 1. Start a new Cowork task and connect the folder that should hold your AI home, such as your Documents folder.
 2. Say: "Set up my AI workspace."
-3. Answer the four questions, read the preview, and say OK. Nothing is created before your OK.
+3. Answer the six questions, read the preview, and say OK. Nothing is created before your OK. The first asks whether you want only an AI home, or also help with the folders beside it. The second is about groups: take ours, or name your own with one line each.
 4. Give it the goal and the first task when it asks. Then you can close the chat.
 
 **3. Come back the next day**
@@ -47,12 +47,14 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.4.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.5.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
 
-Prefer to do it by hand? Move the folder into `~/.claude/skills/`. That folder is hidden on a Mac: in Finder, press Cmd+Shift+G and paste the path.
+Don't use an app's own "import skill" or "create skill" feature for this: some keep only one file and drop the script.
+
+Prefer to do it by hand? Move the whole folder into `~/.claude/skills/`. That folder is hidden on a Mac: in Finder, press Cmd+Shift+G and paste the path.
 
 **2. Set up your workspace**
 
@@ -76,7 +78,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.4.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.5.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -123,7 +125,11 @@ Not tested in this version. The skill is built to work like this:
 | "Undo that." | The last rename, move or archive is reversed |
 | "Check my workspace." | A read-only check, with a fix for each finding |
 | "Set up a daily check." | Optional. You see the exact job first, and nothing is scheduled without your yes |
-| "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. You see the before and after first |
+| "Review my workspace." | A numbered list of proposed changes. Answer with numbers, such as "1 and 3". Only those are done |
+| "Sort my Inbox." | Each item goes into the work folder you name, unopened. "Undo that" puts it back |
+| "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. A copy of the old one is kept, and you see the before and after first |
+| "Add a group: Clients, one folder for each client." | A new group folder with that line. New work can be filed there |
+| "Organize my folders." | Optional. The agent looks at folder names, asks what each is for, and shows a numbered list of changes. Answer with numbers. "Undo that" reverses the last rename or move |
 | "Upgrade my workspace." | After you update the skill: what's new, and the new rules for your workspace, after a preview |
 | "What is this file for?" | A plain answer |
 
