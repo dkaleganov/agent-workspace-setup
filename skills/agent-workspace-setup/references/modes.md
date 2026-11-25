@@ -129,6 +129,7 @@ Each group keeps its own archive, so closed work stays beside the work it belong
 | HND014 | info | `Waiting on <who> since <date>` for more than 14 days | Ask the owner whether to chase it, change the plan or drop it |
 | HND015 | error | A second copy of the hand-off, such as `HANDOFF_v2.md` | Bring anything newer into the original. The owner removes the copy |
 | HND016 | warn | Session log lines with no date at the start, or not newest first | Start each line with its date, newest first |
+| HND017 | info | A rewritten draft of the hand-off is waiting in `_workspace/drafts/` | `tidy <number> --dry-run` shows what it would change. Ask the owner whether to write it. A draft they don't want is theirs to remove |
 | DEC001 | warn | A file cites a decision number that is marked Superseded | Update the file from the entry that replaced it, with the owner's OK |
 | DEC002 | warn | A cited decision number has no entry, or a number is used twice | Ask the owner what was decided, then record it or fix the number |
 | DEC003 | warn | An entry in `DECISIONS.md` that doesn't start with a number or a date | Put it in the decision format, with the owner's OK |
@@ -266,24 +267,26 @@ No pick means by name.
 
 ## Upkeep: tidy up
 
-For when hand-offs have drifted. The owner says "tidy up my workspace", or approves a "Tidy the hand-off" item in a review. The script edits no hand-off, so this is done by hand, one work folder at a time.
+For when hand-offs have drifted. The owner says "tidy up my workspace", or approves a "Tidy the hand-off" item in a review. You rewrite a draft, and the script prints the before and after and writes the hand-off. One work folder at a time.
 
 1. Run `review`, or `check`. Tell the owner which work folders it names, and ask which to tidy. Finish one before starting the next.
-2. Run `snapshot <number>`. It keeps a copy of the hand-off as it is now in `_workspace/snapshots/`, so the tidy-up can be taken back. Then read that folder's `README.md`, hand-off and `DECISIONS.md`. Open other files only when the log points to them.
-3. Draft the new hand-off and show the before and after. Write nothing yet.
+2. Run `snapshot <number>`. It keeps a copy of the hand-off as it is now in `_workspace/snapshots/`, so the tidy-up can be taken back, and it makes a draft in `_workspace/drafts/`. Then read that folder's `README.md`, hand-off and `DECISIONS.md`. Open other files only when the log points to them.
+3. Rewrite the draft, never the hand-off itself.
    - **Current state:** rewritten from the Session log and the files' dates. What is done, in progress and blocked, each with its date. Keep everything that is still true.
    - **Next actions:** finished ones removed, the rest renumbered. If nothing comes next, ask whether the status is now Paused or Closed.
    - **Don't forget:** keep every item that isn't resolved.
-   - **Session log:** past about 30 lines, the older ones move to `HANDOFF-log.md` beside the hand-off, in the same order, and How to continue links that file. Copy them first, check the copy, then shorten the log.
+   - **Session log:** past about 30 lines, take the older ones out of the draft and add a line to How to continue that links `HANDOFF-log.md`. The script moves them to that file beside the hand-off, as written and in the same order. Every other log line stays as written: a draft that drops one without that link is refused.
    - Mark anything you can't confirm from the files `Unconfirmed`. Don't guess.
-4. After the owner's OK for that folder, write it. Set Last updated, and add one Session log line that says the hand-off was tidied.
-5. Leave `DECISIONS.md`, other agents' notes in `AGENT_SYNC.md` and the Key line alone. When all are done, run `map`, then `check`.
+   - In the draft, set Last updated and add one Session log line that says the hand-off was tidied.
+4. Run `tidy <number> --dry-run`. It prints the before and after. Show the owner that output itself, and stop.
+5. After the owner's OK for that folder, run the command the dry run ended with, `tidy <number> --shown <code>`. It writes the draft over the hand-off. If the draft or the hand-off changed since, it refuses: run the dry run again and show the new output.
+6. Leave `DECISIONS.md`, other agents' notes in `AGENT_SYNC.md` and the Key line alone. When all are done, run `check`.
 
 **On a schedule:** the skill runs nothing by itself. An owner whose tool has scheduled tasks can schedule the words "tidy up my workspace and show me what you'd change". It still waits for their OK.
 
 ## Upkeep: after the skill was updated
 
-A workspace remembers which version of the skill set it up. When the copy of the skill is newer and has a rule or a file to add, `check` says so (VER001). A fix release, such as 0.6.1, adds nothing and asks for no upgrade.
+A workspace remembers which version of the skill set it up. When the copy of the skill is newer and has a rule or a file to add, `check` says so (VER001). A release that adds neither, such as 0.6.1 or 0.7.0, asks for no upgrade.
 
 1. Run `upgrade --dry-run`. It lists what's new, and shows the exact section it would add to the end of the home's `AGENTS.md`: the rules that workspaces set up today already have. From version 0.5.0 it also adds `BRIEF.md` at the top of the home when that file is missing.
 2. Tell the owner what's new in plain words, and show them that text.
@@ -361,7 +364,7 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 1. Create the home folder, `_workspace/`, and the group folders, numbered from the home's ten. Ours: +0 Inbox, +1 Projects, +2 Areas, +5 Data. The owner's own: +0 Inbox, then +1, +2 and so on in the order they listed them, up to +8.
 2. Write `_workspace/settings.json`:
    ```json
-   {"version": 1, "skill_version": "0.6.1", "owner": "<name>", "home_number": 90, "separator": "_",
+   {"version": 1, "skill_version": "0.7.0", "owner": "<name>", "home_number": 90, "separator": "_",
     "handoff_file": "HANDOFF.md", "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
    ```
 3. For each file, copy the matching template from `assets/templates`, replace every `{{PLACEHOLDER}}`, and show it before writing it.

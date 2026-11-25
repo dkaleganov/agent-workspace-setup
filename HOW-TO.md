@@ -17,7 +17,7 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.6.1.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.7.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
@@ -47,7 +47,7 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.6.1\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.7.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
@@ -78,7 +78,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.6.1\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.7.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -127,7 +127,7 @@ Not tested in this version. The skill is built to work like this:
 | "Set up a daily check." | Optional. You see the exact job first, and nothing is scheduled without your yes |
 | "Review my workspace." | A numbered list of proposed changes. Answer with numbers, such as "1 and 3". Only those are done |
 | "Sort my Inbox." | Each item goes into the work folder you name, unopened. "Undo that" puts it back |
-| "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. A copy of the old one is kept, and you see the before and after first |
+| "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. You see the before and after first, printed by the script, and it is written after your OK. A copy of the old one is kept |
 | "Add a group: Clients, one folder for each client." | A new group folder with that line. New work can be filed there |
 | "Rethink my groups." | The agent asks what changed in your work and proposes new groups or new lines. Nothing changes before your OK |
 | "Organize my folders." | Optional. The agent looks at folder names and loose files, asks what each is for, and shows a numbered list of changes. Answer with numbers. "Undo that" reverses the last rename, move or batch of files |

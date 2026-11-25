@@ -44,7 +44,7 @@ The names in the example are made up. The groups shown are ours. When you name s
 
 **Cowork**
 
-1. Download `agent-workspace-setup-0.6.1.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.7.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **Claude Code**
@@ -128,7 +128,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | "Set up a daily check" | Optional. A scheduled check that rewrites `STATUS.md` and speaks up only when something needs you |
 | "Review my workspace" | One numbered list of proposed changes: closed work to archive, Inbox items to file, hand-offs to tidy. You approve by number, and nothing else changes |
 | "Sort my Inbox" | Each item is moved into the work folder you name, unopened. The move is logged and can be undone |
-| "Tidy up my workspace" | A hand-off is brought up to date from its own log. A copy of the old one is kept, and you see the before and after first |
+| "Tidy up my workspace" | A hand-off is brought up to date from its own log. The agent rewrites a draft, the script prints the before and after, and writes it after your OK. A copy of the old one is kept |
 | "Add a group" | A new group folder, with one line on what goes there and one on what doesn't |
 | "Rethink my groups" | The agent asks what changed in your work and proposes new groups or new lines. Nothing changes before your OK |
 | "Organize my folders" | Optional. A numbered layout for the folders beside the AI home, proposed in your words. You approve each change by number |
@@ -163,16 +163,21 @@ What no check will catch:
 | The daily check as a scheduled task | One scheduled run in the Claude desktop app, on version 0.4.0 | macOS |
 | Codex | One hands-on run, on version 0.1.0 | macOS |
 | Cowork | One hands-on run on Sonnet, on version 0.1.0 | macOS |
-| The script alone | 191 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| The script alone | 209 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
-What the latest runs showed, on version 0.6.1: 60 runs and 1,268 checks, and none failed.
+What the latest runs showed, on version 0.7.0: 60 runs and 1,281 checks, and none failed.
 
 - **Sonnet:** all fifteen scenarios passed.
 - **Haiku:** all fifteen scenarios passed three times out of three.
 - **Safety checks:** every one passed in every run.
-- **Haiku varies from run to run.** In the round before this one, on the same code, it missed two of 45 runs: a tidy-up reported without the lines it took from the log, and two script commands joined in one shell line.
-- **A limit that stays:** asked to tidy a hand-off, Haiku sometimes writes the new one before showing the before and after. It did so in four of six runs while this version was built, and in none of the three runs here. A copy of the old hand-off was kept every time, so each could be taken back.
+- **A tidy-up was shown before it was written in all four runs.** The agent rewrote a draft, the script printed the before and after, and the hand-off was written after the OK.
+- **Haiku varies from run to run.** In the round before this one, on the same code, it missed three of 45 runs. All three were in setup with groups fitted to your work, and each time the plan was shown before anything was created:
+  - one reply named the pattern in its own words and left out the script's line for it;
+  - one reply left out the offer of our standard groups;
+  - one plan put homes rented by the night and homes on leases into one group.
+- **A limit that stays:** the script can't stop an agent from writing a hand-off directly. The skill's steps lead to the draft, and a copy of the old hand-off is kept first.
 - **What earlier testing changed:**
+  - In the 0.6.1 runs Haiku wrote a tidy-up before showing it in four of nine runs. A tidy-up now goes through a draft and the script's own before and after.
   - In the 0.6.0 runs Haiku overlooked a work folder it was asked to archive, and made a second folder for work that already had one. The check and the list of groups now name every work folder, and adding a folder with a similar name gets a question first.
   - Before that, Haiku listed folders with a plain command before using the skill, and once opened a file whose name looked sensitive. The rules now send every look at your folders through the skill. Only the script states the two ways to sort a messy folder, and it refuses to record a pick until it has printed what each way costs and the notice about model training.
 
@@ -180,7 +185,7 @@ A smaller model follows the rules less closely. The script's refusals and your t
 
 Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, Cowork or Codex on Windows, and the folder help on a real drive with thousands of files. Everything added since 0.1.0 has been tested with Claude Code only.
 
-This is version 0.6.1. Try it on a test folder first.
+This is version 0.7.0. Try it on a test folder first.
 
 ## Where the ideas come from
 

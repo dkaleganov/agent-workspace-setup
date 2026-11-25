@@ -2345,7 +2345,8 @@ class ReviewTests(Base):
         for path in copies:
             self.assertEqual(path.read_bytes(), self.handoff.read_bytes())
         after = manifest(self.home)
-        self.assertEqual({path for path in after if after[path] != before.get(path) and not path.startswith(os.path.join("_workspace", "snapshots"))}, set())
+        records = (os.path.join("_workspace", "snapshots"), os.path.join("_workspace", "drafts"))
+        self.assertEqual({path for path in after if after[path] != before.get(path) and not path.startswith(records)}, set())
         self.assertEqual(self.rules(), rules)
         code, output = run("snapshot", "91.77", "--home", self.home)
         self.assertEqual(code, 1, output)
@@ -2977,11 +2978,11 @@ class FixReleaseTests(Base):
         code, output = run("new", "--title", "Bookkeeping 2027", "--kind", "area", "--dry-run", "--home", self.home)
         self.assertIn("`92_Areas/_Archive/92.01_Bookkeeping/` (archived)", output)
 
-    def test_a_snapshot_says_to_show_the_change_before_writing_it(self):
+    def test_a_snapshot_points_to_the_draft_and_never_says_to_write_the_hand_off(self):
         code, output = run("snapshot", "91.01", "--home", self.home)
         self.assertEqual(code, 0, output)
-        self.assertIn("show the owner the before and after", output)
-        self.assertIn("Write it only after their OK for this folder", output)
+        self.assertIn("leave the hand-off itself as it is", output)
+        self.assertIn("tidy 91.01 --dry-run", output)
         self.assertNotIn("make the approved change", output)
 
     def test_two_next_lines_point_at_the_step_a_smaller_model_skipped(self):
@@ -3022,6 +3023,338 @@ class FixReleaseTests(Base):
             self.assertIn("VER001", self.rules())
         finally:
             ws.__version__ = saved
+
+
+class TidyTests(Base):
+    """0.7.0: a hand-off is rewritten as a draft, shown by the script, and written only as it was shown."""
+
+    LOG = "- 2026-03-01 · agent-workspace-setup skill: created this folder."
+
+    def setUp(self):
+        super().setUp()
+        self.saved_clock = os.environ.get("AGENT_WORKSPACE_NOW")
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-03-01"
+        self.build()
+        self.handoff = self.project() / "HANDOFF.md"
+        self.draft = self.home / "_workspace" / "drafts" / "91.01-HANDOFF.md"
+        self.log_file = self.project() / "HANDOFF-log.md"
+
+    def tearDown(self):
+        if self.saved_clock is None:
+            os.environ.pop("AGENT_WORKSPACE_NOW", None)
+        else:
+            os.environ["AGENT_WORKSPACE_NOW"] = self.saved_clock
+        super().tearDown()
+
+    def start(self):
+        code, output = run("snapshot", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        return output
+
+    def rewrite(self, change, path=None):
+        path = path or self.draft
+        text = path.read_text(encoding="utf-8")
+        new = change(text)
+        self.assertNotEqual(text, new)
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(new)
+
+    @staticmethod
+    def tidied(text):
+        text = text.replace("this folder was created. Nothing else is recorded yet.", "the sitemap is agreed. The home page copy is in progress.")
+        text = text.replace("1. Ask Ana for the goal and the first task, then fill in this hand-off.", "1. Book the photographer.")
+        return text.replace("## Session log\n\n", "## Session log\n\n- 2026-03-01 · test: hand-off tidied.\n")
+
+    def preview(self, expect=0):
+        code, output = run("tidy", "91.01", "--dry-run", "--home", self.home)
+        self.assertEqual(code, expect, output)
+        return output
+
+    def code_of(self, output):
+        return re.search(r"run: tidy 91\.01 --shown ([0-9a-f]{6})$", output.strip()).group(1)
+
+    def write(self, code_shown, expect=0):
+        code, output = run("tidy", "91.01", "--shown", code_shown, "--home", self.home)
+        self.assertEqual(code, expect, output)
+        return output
+
+    def test_snapshot_makes_a_draft_and_its_dry_run_writes_nothing(self):
+        before = manifest(self.home)
+        code, output = run("snapshot", "91.01", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("_workspace/drafts/91.01-HANDOFF.md", output)
+        self.assertEqual(manifest(self.home), before)
+        output = self.start()
+        self.assertEqual(self.draft.read_bytes(), self.handoff.read_bytes())
+        self.assertIn("A draft to rewrite: `_workspace/drafts/91.01-HANDOFF.md`.", output)
+        self.assertIn("Rewrite the draft, `_workspace/drafts/91.01-HANDOFF.md`", output)
+        self.assertNotIn("HND017", self.rules())                        # a draft nobody rewrote is no finding
+
+    def test_a_rewritten_draft_is_never_overwritten(self):
+        self.start()
+        self.rewrite(self.tidied)
+        mine = self.draft.read_bytes()
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-03-02"
+        code, output = run("snapshot", "91.01", "--dry-run", "--home", self.home)
+        self.assertIn("It would be left as it is.", output)
+        output = self.start()
+        self.assertEqual(self.draft.read_bytes(), mine)
+        self.assertIn("A rewritten draft is waiting: `_workspace/drafts/91.01-HANDOFF.md`. It was left as it is.", output)
+        self.assertIn("run tidy 91.01 --dry-run", output)
+        self.assertEqual(len(list((self.home / "_workspace" / "snapshots" / "91.01").iterdir())), 2)
+
+    def test_an_untouched_draft_is_replaced_when_the_hand_off_moved_on(self):
+        self.start()
+        self.rewrite(self.tidied, self.handoff)                         # someone wrote the hand-off directly
+        self.assertNotEqual(self.draft.read_bytes(), self.handoff.read_bytes())
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-03-02"
+        output = self.start()
+        self.assertIn("A draft to rewrite", output)
+        self.assertEqual(self.draft.read_bytes(), self.handoff.read_bytes())
+
+    def test_tidy_needs_a_draft_and_one_that_differs(self):
+        before = manifest(self.home)
+        output = self.preview(expect=1)
+        self.assertIn("There is no draft for 91.01 yet.", output)
+        self.assertIn("Run snapshot 91.01 first.", output)
+        self.assertEqual(manifest(self.home), before)
+        self.start()
+        output = self.preview(expect=1)
+        self.assertIn("still equals the hand-off", output)
+        code, output = run("tidy", "91.77", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 1, output)
+
+    def test_the_dry_run_prints_the_before_and_after_and_changes_nothing(self):
+        self.start()
+        self.rewrite(self.tidied)
+        before = manifest(self.home)
+        output = self.preview()
+        self.assertEqual(manifest(self.home), before)
+        self.assertIn("# Tidy 91.01 (dry run): nothing was changed", output)
+        self.assertIn("## How to continue: unchanged", output)
+        self.assertIn("## Current state, before\n- 2026-03-01: this folder was created. Nothing else is recorded yet.", output)
+        self.assertIn("## Current state, after\n- 2026-03-01: the sitemap is agreed. The home page copy is in progress.", output)
+        self.assertIn("## Next actions, before\n1. Ask Ana for the goal", output)
+        self.assertIn("## Next actions, after\n1. Book the photographer.", output)
+        self.assertIn("## Don't forget: unchanged", output)
+        self.assertIn("## Session log: 1 line kept, 1 added, 0 moved out", output)
+        self.assertIn("Added: - 2026-03-01 · test: hand-off tidied.", output)
+        self.assertIn("Lines marked Unconfirmed: 0 before, 0 after.", output)
+        self.assertIn("Show the owner this before and after itself, not a summary of it, and stop.", output)
+        self.assertRegex(output.strip(), r"run: tidy 91\.01 --shown [0-9a-f]{6}$")
+
+    def test_the_write_needs_the_code_of_what_was_shown(self):
+        self.start()
+        self.rewrite(self.tidied)
+        old = self.handoff.read_bytes()
+        code, output = run("tidy", "91.01", "--home", self.home)
+        self.assertEqual(code, 1, output)
+        self.assertIn("only after the owner saw its before and after", output)
+        self.assertIn("Run tidy 91.01 --dry-run", output)
+        self.assertIn("changed after the before and after was shown", self.write("000000", expect=1))
+        shown = self.code_of(self.preview())
+        self.rewrite(lambda text: text.replace("Book the photographer.", "Book the photographer and the venue."))
+        self.assertIn("changed after the before and after was shown", self.write(shown, expect=1))
+        self.assertEqual(self.handoff.read_bytes(), old)
+        shown = self.code_of(self.preview())
+        self.rewrite(lambda text: text.replace("**Main files:** none yet", "**Main files:** sitemap.pdf"), self.handoff)
+        self.assertIn("changed after the before and after was shown", self.write(shown, expect=1))
+        self.assertTrue(self.draft.is_file())
+        self.write(self.code_of(self.preview()))
+        self.assertIn("Book the photographer and the venue.", self.handoff.read_text(encoding="utf-8"))
+
+    def test_the_write_moves_the_draft_over_the_hand_off(self):
+        key = self.key_of(self.project())
+        old = self.handoff.read_bytes()
+        self.start()
+        self.rewrite(lambda text: self.tidied(text).replace("**Status:** Active", "**Status:** Paused"))
+        new = self.draft.read_bytes()
+        before = manifest(self.home)
+        output = self.preview()
+        self.assertIn("**Status:** Active  →  Paused", output)
+        output = self.write(self.code_of(output))
+        self.assertIn("# Tidy done", output)
+        self.assertIn("`91_Projects/91.01_Website-relaunch/HANDOFF.md` now reads as shown.", output)
+        self.assertIn("The hand-off as it was: `_workspace/snapshots/91.01/20260301-000000-HANDOFF.md`.", output)
+        self.assertIn("copy that file over the hand-off", output)
+        self.assertEqual(self.handoff.read_bytes(), new)
+        self.assertFalse(self.draft.exists())
+        self.assertFalse(self.log_file.exists())
+        self.assertEqual((self.home / "_workspace" / "snapshots" / "91.01" / "20260301-000000-HANDOFF.md").read_bytes(), old)
+        self.assertEqual(self.key_of(self.project()), key)
+        after = manifest(self.home)
+        changed = {path for path in set(before) | set(after) if before.get(path) != after.get(path)}
+        self.assertEqual(changed - {"README.md"}, {os.path.join("91_Projects", "91.01_Website-relaunch", "HANDOFF.md"),
+                                                 os.path.join("_workspace", "drafts", "91.01-HANDOFF.md")})
+        row = next(line for line in (self.home / "README.md").read_text(encoding="utf-8").splitlines() if "91.01" in line)
+        self.assertIn("Paused", row)                                    # the map follows the new hand-off
+        self.assertEqual([finding for finding in self.check()[1]["findings"] if finding["severity"] == "error"], [])
+        self.assertNotIn("HND017", self.rules())
+        self.assertIn("There is no draft for 91.01 yet.", self.preview(expect=1))
+
+    def test_a_draft_that_breaks_the_hand_off_is_refused(self):
+        self.start()
+        original = self.draft.read_text(encoding="utf-8")
+        old = self.handoff.read_bytes()
+        key = self.key_of(self.project())
+        breaks = {
+            "the five headings": lambda text: self.tidied(text).replace("## Don't forget\n", "## Reminders\n"),
+            "The Key must stay as it is: `%s`." % key: lambda text: self.tidied(text).replace("**Key:** %s" % key, "**Key:** abc123"),
+            "The header must keep: Status.": lambda text: self.tidied(text).replace(" · **Status:** Active", ""),
+            "Its first line must stay `# Handoff: Website relaunch`.": lambda text: self.tidied(text).replace("# Handoff: Website relaunch", "# Website relaunch"),
+        }
+        for message, change in breaks.items():
+            self.draft.write_text(change(original), encoding="utf-8")
+            output = self.preview(expect=1)
+            self.assertIn("The draft of 91.01 can't be written as it is:", output)
+            self.assertIn(message, output)
+            self.assertIn("Fix the draft, `_workspace/drafts/91.01-HANDOFF.md`.", output)
+        self.assertEqual(self.handoff.read_bytes(), old)
+
+    def test_a_dropped_log_line_is_refused_without_a_link_to_the_log_file(self):
+        self.start()
+        self.rewrite(lambda text: self.tidied(text).replace(self.LOG + "\n", ""))
+        output = self.preview(expect=1)
+        self.assertIn("1 Session log line isn't in the draft. Put it back as written.", output)
+        self.assertIn("add a line to How to continue that links `HANDOFF-log.md`", output)
+        self.assertIn("Missing: `%s`" % self.LOG, output)
+        self.rewrite(lambda text: text.replace("## Session log\n\n", "## Session log\n\n%s\n" % self.LOG.replace("created", "made")))
+        self.assertIn("1 Session log line isn't in the draft.", self.preview(expect=1))    # a reworded line counts as dropped
+
+    def test_older_log_lines_move_to_the_log_file_newest_first(self):
+        lines = ["- 2026-02-2%d · test: step %d." % (day, day) for day in (5, 4, 3, 2, 1)]
+        self.rewrite(lambda text: text.replace(self.LOG, "\n".join(lines + [self.LOG.replace("03-01", "02-20")])), self.handoff)
+        self.start()
+        link = "- Older log lines are in `HANDOFF-log.md`.\n"
+        keep_two = lambda text: self.tidied(text).replace("\n".join(lines[2:] + [self.LOG.replace("03-01", "02-20")]) + "\n", "") \
+            .replace("## How to continue\n\n", "## How to continue\n\n" + link)
+        self.rewrite(keep_two)
+        output = self.preview()
+        self.assertIn("## Session log: 2 lines kept, 1 added, 4 moved out", output)
+        self.assertIn("Moved to `91_Projects/91.01_Website-relaunch/HANDOFF-log.md`, as written and in the same order, so no line is lost:", output)
+        self.assertIn("## How to continue, after", output)
+        self.assertFalse(self.log_file.exists())
+        output = self.write(self.code_of(output))
+        self.assertIn("4 older Session log lines are now in `91_Projects/91.01_Website-relaunch/HANDOFF-log.md`.", output)
+        moved = [line for line in self.log_file.read_text(encoding="utf-8").splitlines() if line.startswith("- ")]
+        self.assertEqual(moved, lines[2:] + [self.LOG.replace("03-01", "02-20")])
+        self.assertTrue(self.log_file.read_text(encoding="utf-8").startswith("# Session log, older lines: Website relaunch\n\n"))
+        tidy = self.handoff.read_text(encoding="utf-8")
+        self.assertIn(lines[1], tidy)
+        self.assertNotIn(lines[2], tidy)
+        self.assertNotIn("HND015", self.rules())                        # the log file is no second copy of the hand-off
+        # A later tidy-up moves a newer line: it goes on top, and a line that is already there isn't added twice.
+        self.log_file.write_text(self.log_file.read_text(encoding="utf-8").replace("# Session log", "# The older log"), encoding="utf-8")
+        os.environ["AGENT_WORKSPACE_NOW"] = "2026-03-05"
+        self.start()
+        self.rewrite(lambda text: text.replace(lines[1] + "\n", "").replace("Book the photographer.", "Book the venue."))
+        with open(self.log_file, "a", encoding="utf-8", newline="\n") as handle:
+            handle.write("")
+        self.write(self.code_of(self.preview()))
+        moved = [line for line in self.log_file.read_text(encoding="utf-8").splitlines() if line.startswith("- ")]
+        self.assertEqual(moved, [lines[1]] + lines[2:] + [self.LOG.replace("03-01", "02-20")])
+        self.assertTrue(self.log_file.read_text(encoding="utf-8").startswith("# The older log, older lines"))
+
+    def test_a_line_already_in_the_log_file_is_not_added_twice(self):
+        old_line = self.LOG
+        self.log_file.write_text("# Session log, older lines: Website relaunch\n\n%s\n" % old_line, encoding="utf-8")
+        self.start()
+        self.rewrite(lambda text: self.tidied(text).replace(old_line + "\n", "")
+                     .replace("## How to continue\n\n", "## How to continue\n\n- Older log lines are in `HANDOFF-log.md`.\n"))
+        output = self.write(self.code_of(self.preview()))
+        self.assertIn("1 older Session log line is now in `91_Projects/91.01_Website-relaunch/HANDOFF-log.md`, 1 of them already there.", output)
+        self.assertEqual(self.log_file.read_text(encoding="utf-8").count(old_line), 1)
+
+    def test_the_preview_names_a_line_that_lost_its_unconfirmed_mark(self):
+        self.rewrite(lambda text: text.replace("- Nothing yet.", "- Unconfirmed: the domain expires in May."), self.handoff)
+        self.start()
+        self.rewrite(lambda text: self.tidied(text).replace("- Unconfirmed: the domain expires in May.", "- The domain expires in May."))
+        output = self.preview()
+        self.assertIn("Lines marked Unconfirmed: 1 before, 0 after.", output)
+        self.assertIn("Was marked Unconfirmed, and the draft changes or drops it: - Unconfirmed: the domain expires in May.", output)
+
+    def test_the_preview_says_when_the_hand_off_changed_after_the_draft(self):
+        self.start()
+        self.rewrite(self.tidied)
+        self.assertNotIn("**Note:**", self.preview())
+        self.rewrite(lambda text: text.replace("**Main files:** none yet", "**Main files:** sitemap.pdf"), self.handoff)
+        later = self.draft.stat().st_mtime + 60
+        os.utime(str(self.handoff), (later, later))
+        output = self.preview()
+        self.assertIn("**Note:** the hand-off was changed after this draft was last written.", output)
+        self.assertIn("**Main files:** sitemap.pdf  →  none yet", output)
+
+    def test_the_check_and_the_review_name_a_waiting_draft(self):
+        self.start()
+        self.rewrite(self.tidied)
+        found = [finding for finding in self.check()[1]["findings"] if finding["rule"] == "HND017"]
+        self.assertEqual(len(found), 1, found)
+        self.assertIn("is waiting in `_workspace/drafts/91.01-HANDOFF.md`", found[0]["message"])
+        self.assertIn("tidy 91.01 --dry-run", found[0]["fix"])
+        code, output = run("review", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("Finish the tidy-up of", output)
+        self.assertIn("`tidy 91.01 --dry-run`, show the before and after, and write after the OK.", output)
+        self.write(self.code_of(self.preview()))
+        self.assertNotIn("HND017", self.rules())
+
+    def test_the_review_says_how_to_tidy_a_hand_off(self):
+        self.rewrite(lambda text: text.replace("1. Ask Ana for the goal and the first task, then fill in this hand-off.", "1. None yet."), self.handoff)
+        code, output = run("review", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("Tidy the hand-off of", output)
+        self.assertIn("`snapshot 91.01`, which keeps a copy and makes a draft. Rewrite the draft", output)
+        self.assertIn("Then `tidy 91.01 --dry-run`, and write after the OK.", output)
+
+    def test_tidy_follows_a_hand_off_under_another_name(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["handoff_file"] = "STATUS-NOTE.md"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        for old in sorted(self.home.glob("9*/*/HANDOFF.md")):
+            old.rename(old.with_name("STATUS-NOTE.md"))
+        note = self.project() / "STATUS-NOTE.md"
+        draft = self.home / "_workspace" / "drafts" / "91.01-STATUS-NOTE.md"
+        code, output = run("snapshot", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("_workspace/drafts/91.01-STATUS-NOTE.md", output)
+        self.rewrite(lambda text: self.tidied(text).replace(self.LOG + "\n", "")
+                     .replace("## How to continue\n\n", "## How to continue\n\n- Older log lines are in `STATUS-NOTE-log.md`.\n"), draft)
+        code, output = run("tidy", "91.01", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("STATUS-NOTE-log.md", output)
+        self.write(self.code_of(output))
+        self.assertIn("Book the photographer.", note.read_text(encoding="utf-8"))
+        self.assertIn(self.LOG, (self.project() / "STATUS-NOTE-log.md").read_text(encoding="utf-8"))
+        self.assertFalse(draft.exists())
+
+    def test_a_private_folders_hand_off_is_never_printed(self):
+        self.start()
+        self.rewrite(self.tidied)
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["private"] = ["91_Projects/91.01_Website-relaunch"]
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        for command in (["tidy", "91.01", "--dry-run"], ["snapshot", "91.01"]):
+            code, output = run(*command, "--home", self.home)
+            self.assertEqual(code, 1, output)
+            self.assertNotIn("sitemap", output)
+            self.assertNotIn("Current state", output)
+
+    def test_a_workspace_set_up_by_the_version_before_is_asked_for_no_upgrade(self):
+        self.assertFalse(any(ws.version_tuple(step["version"]) > ws.version_tuple("0.6.0") for step in ws.UPGRADES))
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["skill_version"] = "0.6.1"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        self.assertNotIn("VER001", self.rules())
+        code, output = run("upgrade", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("Nothing was added between the two: no rule and no file.", output)
+        self.start()                                                    # and the new commands work on it as it is
+        self.rewrite(self.tidied)
+        self.write(self.code_of(self.preview()))
+        self.assertEqual(json.loads(settings_path.read_text(encoding="utf-8"))["skill_version"], "0.6.1")
 
 
 class PackageTests(unittest.TestCase):

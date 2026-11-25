@@ -118,7 +118,7 @@ A folder already inside the AI home: `adopt "<folder>" --kind project|area|data 
 1. Run `review`. It prints a numbered list of proposed changes and changes nothing. Show the list exactly as numbered, ask which numbers to do, and stop.
 2. Do only the numbers the owner approves. A move gets its own `--dry-run` first. An edit is shown before it is written.
 3. **An Inbox item:** `file "<item>" --to <number> --dry-run`, then for real. The item is moved unopened, and `undo` reverses it.
-4. **A hand-off** that is out of date, too long, without a next action, or with lines marked Unconfirmed: run `snapshot <number>` first, which keeps a copy. Then one work folder at a time: show the before and after, and write only after the OK for that folder. Follow "Upkeep: tidy up" in [modes.md](references/modes.md).
+4. **A hand-off** that is out of date, too long, without a next action, or with lines marked Unconfirmed: run `snapshot <number>` first. It keeps a copy and makes a draft in the skill's records. Rewrite the draft, never the hand-off itself. Then `tidy <number> --dry-run` prints the before and after: show it and stop. After the OK for that folder, run the command the dry run ended with. One work folder at a time. Follow "Upkeep: tidy up" in [modes.md](references/modes.md).
 
 ## Organize the folders (optional)
 
@@ -175,7 +175,8 @@ Answer in plain words from [principles.md](references/principles.md): what each 
 | `review` | Lists proposed changes by number | No |
 | `layout look`, `ways`, `choose`, `plan --changes F`, `apply --only N`, `undo`, `keep NAME` | Optional: organizes the folders beside the home, and sorts files the way the owner picked | Only what the owner approved by number. The plan and the pick go into the skill's records |
 | `file ITEM --to N [--dry-run]` | Moves one Inbox item into a work folder | One logged move |
-| `snapshot N` | Keeps a copy of a hand-off before a rewrite | One new file in the skill's records |
+| `snapshot N` | Keeps a copy of a hand-off and makes a draft of it to rewrite | Two new files in the skill's records |
+| `tidy N --dry-run`, then `tidy N --shown CODE` | Prints the before and after of the rewritten draft, then writes it over the hand-off | That hand-off, after the OK. Older log lines go to a log file beside it |
 | `kit --answers F --out ZIP` | Builds a starter workspace as one ZIP, for a chat app | The ZIP only |
 | `install [--tool T] [--update] [--dry-run]` | Copies the skill into a tool's skills folder, or shows where it is | That folder, with the OK |
 | `connect --tool T [--remove] [--dry-run]` | Adds one section to a tool's personal instructions | That one file, with the OK |

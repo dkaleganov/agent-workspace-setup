@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+One new command for agents, `tidy`. What you say stays the same, and no workspace needs an upgrade.
+
+- **A tidy-up with a real preview.** When a hand-off is tidied, the agent now rewrites a draft, and the script prints the before and after for you. After your OK the script writes it, and it refuses a draft that differs from what it printed.
+- **No log line is lost.** When a tidy-up shortens a long Session log, the script moves the older lines to a log file beside the hand-off. A draft that drops a log line any other way is refused.
+- **A tidy-up left half done is reported.** The check names a draft that is waiting.
+
 ## 0.6.1
 
 A fix release. No new command, rule or question, and no workspace needs an upgrade.

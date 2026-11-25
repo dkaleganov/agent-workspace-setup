@@ -86,6 +86,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 | `STATUS.md` | the AI home | Only with a routine: what needs you today. Rewritten by every run |
 | `BRIEF.md` | the AI home | How to brief you, step by step, for an agent with or without the skill |
 | `_workspace/snapshots/` | the AI home | A copy of a hand-off, kept each time before a tidy-up rewrites it |
+| `_workspace/drafts/` | the AI home | The draft of a hand-off while a tidy-up rewrites it. Writing it moves it over the hand-off |
 | `AGENTS.md` | each group | Three lines that send an agent to the rules and the map |
 | `CLAUDE.md` | each group and work folder | One line that makes Claude load the `AGENTS.md` beside it |
 | `README.md` | each work folder | What the work is and how the folder is organized. It changes only when the goal changes |
@@ -199,7 +200,7 @@ When files need sorting, the agent shows you two ways and you pick.
 - **"Review my workspace"** gives one numbered list of proposed changes: closed work to archive, Inbox items to file, hand-offs to tidy, questions only you can answer.
 - **You approve by number.** "Do 1 and 3" does those two and nothing else.
 - **Every move is logged** and can be undone, including an Inbox item filed into a work folder. The item is moved unopened.
-- **Before a hand-off is rewritten,** a copy of it is kept in `_workspace/snapshots/`.
+- **Before a hand-off is rewritten,** a copy of it is kept in `_workspace/snapshots/`. The agent rewrites a draft, the script prints the before and after, and the hand-off changes only after your OK.
 - **Structure changes go through the skill.** Agents never rename, move or archive a numbered folder by hand, because the number ledger and the move log would miss it.
 
 ## What the skill never does

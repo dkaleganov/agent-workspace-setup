@@ -33,7 +33,7 @@ import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.6.1"
+__version__ = "0.7.0"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
@@ -48,6 +48,7 @@ STATUS_FILE = "STATUS.md"
 RUNS_FILE = "runs.jsonl"
 FINDINGS_FILE = "findings.json"
 SNAPSHOT_DIR = "snapshots"
+DRAFT_DIR = "drafts"
 BRIEF_FILE = "BRIEF.md"
 FACTS_FILE = "FACTS.md"
 ROUTINE_KINDS = ("daily", "weekly")
@@ -1905,6 +1906,7 @@ RULES = {
     "HND014": ("info", "Waiting on someone for a long time"),
     "HND015": ("error", "A second copy of the hand-off"),
     "HND016": ("warn", "Session log undated or out of order"),
+    "HND017": ("info", "A tidy-up of a hand-off is unfinished"),
     "DEC003": ("warn", "A decision entry in the wrong shape"),
     "WRK006": ("warn", "A second copy of a standard file"),
     "DEC001": ("warn", "A superseded decision is still cited"),
@@ -2175,6 +2177,13 @@ def run_check(home):
                 else:
                     add("WRK006", "%s/%s" % (item["rel"], copy), "This looks like a second copy of `%s`." % original,
                         "With the owner's OK, bring anything newer into `%s`, then let the owner remove the copy." % original)
+            draft = draft_path(home, item)
+            with contextlib.suppress(OSError):
+                if draft.is_file() and draft.read_bytes() != handoff_path.read_bytes():
+                    made = dt.datetime.fromtimestamp(draft.stat().st_mtime).strftime("%Y-%m-%d")
+                    add("HND017", rel, "A rewritten draft of this hand-off from %s is waiting in `%s`." % (made, home.rel(draft)),
+                        "Run tidy %s --dry-run to see what it would change, and ask the owner whether to write it. "
+                        "A draft they don't want is theirs to remove." % item["number"])
 
     if isinstance(home.settings.get("layout"), dict):
         base = home.root.parent
@@ -4971,6 +4980,9 @@ def proposals(home, findings, rows):
         elif rule == "VER001":
             commands.append({"what": "Bring this workspace's rules up to this version of the skill.",
                              "how": "`upgrade --dry-run`, then for real."})
+        elif rule == "HND017" and number:
+            commands.append({"what": "Finish the tidy-up of %s. %s" % (where, message),
+                             "how": "`tidy %s --dry-run`, show the before and after, and write after the OK." % number})
         elif rule in TIDY_RULES and number:
             tidy.setdefault(number, {"where": where, "why": []})["why"].append(message)
         elif rule in ASK_RULES:
@@ -4978,8 +4990,9 @@ def proposals(home, findings, rows):
         else:
             fixes.append({"what": "%s: %s" % (where, message), "how": finding["fix"]})
     edits = [{"what": "Tidy the hand-off of %s. %s" % (entry["where"], " ".join(entry["why"])),
-              "how": "`snapshot %s`. Then rebuild Current state from the Session log, and take Next actions from what the "
-                     "owner says. Show the before and after, and write after the OK." % number}
+              "how": "`snapshot %s`, which keeps a copy and makes a draft. Rewrite the draft: Current state from the "
+                     "Session log, Next actions from what the owner says. Then `tidy %s --dry-run`, and write after the OK."
+                     % (number, number)}
              for number, entry in sorted(tidy.items())]
     return broken + commands + edits + fixes + asks
 
@@ -5060,34 +5073,205 @@ def cmd_file(args):
                       % (item["number"], home.handoff))
 
 
+def draft_path(home, item):
+    """Where the draft of a work folder's hand-off sits while it is rewritten."""
+    return home.records / DRAFT_DIR / ("%s-%s" % (item["number"], home.handoff))
+
+
+def kept_copies(home, number):
+    """The copies of this hand-off that snapshot kept, oldest first."""
+    folder = home.records / SNAPSHOT_DIR / number
+    try:
+        return sorted(child for child in folder.iterdir() if child.is_file() and child.name.endswith("-" + home.handoff))
+    except OSError:
+        return []
+
+
+def log_entries(section):
+    """The lines of a Session log, one for each bullet."""
+    return [line.strip() for line in section.splitlines() if re.match(r"^[ \t]*[-*][ \t]+\S", line)]
+
+
+def move_to_log(log_file, lines, title):
+    """Put Session log lines at the top of the log file beside a hand-off. A line that is already there isn't added twice."""
+    existing = read_text(log_file) if log_file.is_file() else ""
+    have = {line.strip() for line in existing.splitlines()}
+    fresh = [line for line in lines if line not in have]
+    if not fresh:
+        return 0
+    rows = existing.splitlines() if existing.strip() else ["# Session log, older lines: %s" % title, ""]
+    first = next((index for index, row in enumerate(rows) if re.match(r"^[ \t]*[-*][ \t]+\S", row)), len(rows))
+    rows[first:first] = fresh
+    part = log_file.with_name(log_file.name + ".part")
+    with open(part, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write("\n".join(rows).rstrip("\n") + "\n")
+    os.replace(str(part), str(log_file))
+    return len(fresh)
+
+
 def cmd_snapshot(args):
     home = open_home(args)
     state = State(home)
     item, _ = state.find(args.number)
+    number = item["number"]
     source = item["path"] / home.handoff
     if not source.is_file():
-        raise Refuse("%s has no `%s` to keep a copy of." % (item["number"], home.handoff), "Run check to see what is there.")
-    folder = home.records / SNAPSHOT_DIR / item["number"]
+        raise Refuse("%s has no `%s` to keep a copy of." % (number, home.handoff), "Run check to see what is there.")
+    folder = home.records / SNAPSHOT_DIR / number
     stamp = now().strftime("%Y%m%d-%H%M%S")
     target, extra = folder / ("%s-%s" % (stamp, home.handoff)), 1
     while target.exists():
         extra += 1
         target = folder / ("%s-%d-%s" % (stamp, extra, home.handoff))
+    current = source.read_bytes()
+    draft, waiting = draft_path(home, item), False
+    if draft.is_file():
+        body = draft.read_bytes()
+        # A draft that equals the hand-off or a kept copy was never rewritten. Any other draft is someone's work.
+        waiting = body != current and not any(body == copy.read_bytes() for copy in kept_copies(home, number))
     out = Out()
     if args.dry_run:
         out.say("# Snapshot (dry run): nothing was written")
         out.say()
         out.say("`%s`  →  a copy at `%s`" % (home.rel(source), home.rel(target)))
-        return out.finish("Run the same command without --dry-run before you rewrite the hand-off.")
+        if waiting:
+            out.say("A rewritten draft is waiting at `%s`. It would be left as it is." % home.rel(draft))
+        else:
+            out.say("And a draft to rewrite at `%s`." % home.rel(draft))
+        return out.finish("Run the same command without --dry-run. Then rewrite the draft, never the hand-off itself.")
     folder.mkdir(parents=True, exist_ok=True)
     with open(target, "xb") as handle:
-        handle.write(source.read_bytes())
+        handle.write(current)
     out.say("# Snapshot kept")
     out.say()
     out.say("A copy of `%s` as it is now: `%s`." % (home.rel(source), home.rel(target)))
-    return out.finish("Now draft the new hand-off and show the owner the before and after. Write it only after their OK "
-                      "for this folder. Tell the owner where the copy is: to take a change back, copy this file over the "
-                      "hand-off with their OK.")
+    if waiting:
+        out.say("A rewritten draft is waiting: `%s`. It was left as it is." % home.rel(draft))
+        return out.finish("Go on with that draft: run tidy %s --dry-run, which prints the before and after for the owner. "
+                          "To start over instead, ask the owner to remove the draft, then run snapshot again." % number)
+    draft.parent.mkdir(parents=True, exist_ok=True)
+    part = draft.with_name(draft.name + ".part")
+    part.write_bytes(current)
+    os.replace(str(part), str(draft))
+    out.say("A draft to rewrite: `%s`." % home.rel(draft))
+    return out.finish("Rewrite the draft, `%s`, and leave the hand-off itself as it is. Then run tidy %s --dry-run: it "
+                      "prints the before and after for the owner." % (home.rel(draft), number))
+
+
+# ----------------------------------------------------------------------------
+# tidy: the before and after of a rewritten hand-off, then the write
+# ----------------------------------------------------------------------------
+
+def cmd_tidy(args):
+    home = open_home(args)
+    state = State(home)
+    item, _ = state.find(args.number)
+    number = item["number"]
+    target = item["path"] / home.handoff
+    if not target.is_file():
+        raise Refuse("%s has no `%s` to tidy." % (number, home.handoff), "Run check to see what is there.")
+    draft = draft_path(home, item)
+    if not draft.is_file():
+        raise Refuse("There is no draft for %s yet." % number,
+                     "Run snapshot %s first. It keeps a copy of the hand-off and makes the draft to rewrite." % number)
+    old_bytes, new_bytes = target.read_bytes(), draft.read_bytes()
+    try:
+        old, new = old_bytes.decode("utf-8-sig"), new_bytes.decode("utf-8-sig")
+    except UnicodeError:
+        raise Refuse("The hand-off or its draft isn't UTF-8 text.", "Tell the owner. Nothing was changed.")
+    draft_rel = home.rel(draft)
+    if old_bytes == new_bytes:
+        raise Refuse("The draft of %s still equals the hand-off, so there is nothing to show." % number,
+                     "Rewrite the draft, `%s`. Then run tidy %s --dry-run." % (draft_rel, number))
+    before, after = parse_handoff(old), parse_handoff(new)
+    log_name = Path(home.handoff).stem + "-log.md"
+    log_file = item["path"] / log_name
+    was, will = log_entries(before["sections"].get("Session log", "")), log_entries(after["sections"].get("Session log", ""))
+    leaving = [line for line in was if line not in will]
+    added = [line for line in will if line not in was]
+    reasons = []
+    if [heading for heading in after["headings"] if heading in HEADINGS] != HEADINGS:
+        reasons.append("It must keep the five headings in this order: %s." % ", ".join(HEADINGS))
+    if before["title"] and not after["title"]:
+        reasons.append("Its first line must stay `# Handoff: %s`." % before["title"])
+    if before["fields"].get("Key") != after["fields"].get("Key"):
+        reasons.append("The Key must stay as it is: `%s`." % before["fields"].get("Key", ""))
+    gone = [name for name in ("Purpose", "Status", "Last updated") if before["fields"].get(name) and not after["fields"].get(name)]
+    if gone:
+        reasons.append("The header must keep: %s." % ", ".join(gone))
+    if leaving and log_name not in after["sections"].get("How to continue", ""):
+        reasons.append(
+            "%d Session log line%s in the draft. Put %s back as written. Or, to move older lines out of the hand-off, "
+            "add a line to How to continue that links `%s`: the script then moves them there. Missing: %s"
+            % (len(leaving), " isn't" if len(leaving) == 1 else "s aren't", "it" if len(leaving) == 1 else "them", log_name,
+               " ".join("`%s`" % line for line in leaving[:3]) + (" and %d more." % (len(leaving) - 3) if len(leaving) > 3 else "")))
+    if reasons:
+        raise Refuse("The draft of %s can't be written as it is:\n%s" % (number, bullets(reasons)),
+                     "Fix the draft, `%s`. Then run tidy %s --dry-run." % (draft_rel, number))
+    code = hashlib.sha256(old_bytes + b"\0" + new_bytes).hexdigest()[:6]
+    unsure = lambda body: [line.strip() for line in strip_code(body).splitlines() if re.search(r"(?i)\bunconfirmed\b", line)]
+    out = Out()
+    if args.dry_run:
+        out.say("# Tidy %s (dry run): nothing was changed" % number)
+        out.say()
+        out.say("The before and after of `%s`." % home.rel(target))
+        with contextlib.suppress(OSError):
+            if target.stat().st_mtime > draft.stat().st_mtime:
+                out.say()
+                out.say("**Note:** the hand-off was changed after this draft was last written. The before texts show it as "
+                        "it is now. Check that nothing newer is dropped.")
+        for name in ("Purpose", "Status", "Main files", "Last updated"):
+            if before["fields"].get(name) != after["fields"].get(name):
+                out.say()
+                out.say("**%s:** %s  →  %s" % (name, before["fields"].get(name) or "(none)", after["fields"].get(name) or "(none)"))
+        for name in HEADINGS[:-1]:
+            earlier, later = before["sections"].get(name, "").strip("\n"), after["sections"].get(name, "").strip("\n")
+            out.say()
+            if earlier == later:
+                out.say("## %s: unchanged" % name)
+                continue
+            out.say("## %s, before" % name)
+            out.say(earlier or "(empty)")
+            out.say()
+            out.say("## %s, after" % name)
+            out.say(later or "(empty)")
+        kept = len(was) - len(leaving)
+        out.say()
+        out.say("## Session log: %d line%s kept, %d added, %d moved out" % (kept, "" if kept == 1 else "s", len(added), len(leaving)))
+        for line in added:
+            out.say("Added: %s" % line)
+        if leaving:
+            out.say("Moved to `%s`, as written and in the same order, so no line is lost:" % home.rel(log_file))
+            for line in leaving:
+                out.say(line)
+        marked, still = unsure(old), unsure(new)
+        out.say()
+        out.say("Lines marked Unconfirmed: %d before, %d after." % (len(marked), len(still)))
+        for line in [line for line in marked if line not in still]:
+            out.say("Was marked Unconfirmed, and the draft changes or drops it: %s" % line)
+        return out.finish("Show the owner this before and after itself, not a summary of it, and stop. When they approve it, "
+                          "run: tidy %s --shown %s" % (number, code))
+    if args.shown != code:
+        raise Refuse("A hand-off is written only after the owner saw its before and after." if not args.shown
+                     else "The hand-off or its draft changed after the before and after was shown.",
+                     "Run tidy %s --dry-run, show its output, and use the command it ends with after their OK." % number)
+    copies = kept_copies(home, number)
+    with lock(home):
+        moved = move_to_log(log_file, leaving, before["title"] or number) if leaving else 0
+        os.replace(str(draft), str(target))
+        _, map_message = refresh_map(home, State(home), write=True)
+    out.say("# Tidy done")
+    out.say()
+    out.say("`%s` now reads as shown." % home.rel(target))
+    if leaving:
+        out.say("%d older Session log line%s now in `%s`%s." % (
+            len(leaving), " is" if len(leaving) == 1 else "s are", home.rel(log_file),
+            "" if moved == len(leaving) else ", %d of them already there" % (len(leaving) - moved)))
+    if copies:
+        out.say("The hand-off as it was: `%s`." % home.rel(copies[-1]))
+    out.say(map_message)
+    return out.finish("Tell the owner what changed and where the copy of the old hand-off is: to take the tidy-up back, "
+                      "copy that file over the hand-off with their OK. Then run check.")
 
 
 # ----------------------------------------------------------------------------
@@ -5464,8 +5648,14 @@ def build_parser():
     sub.add_argument("item", help="the item's name in the Inbox")
     sub.add_argument("--to", required=True, help="the work folder's number, such as 91.01")
 
-    sub = add("snapshot", cmd_snapshot, "Keep a copy of a work folder's hand-off before it is rewritten.", dry_run=True)
+    sub = add("snapshot", cmd_snapshot, "Keep a copy of a work folder's hand-off, and make a draft of it to rewrite.",
+              dry_run=True)
     sub.add_argument("number")
+
+    sub = add("tidy", cmd_tidy, "Show the before and after of a hand-off's rewritten draft. Write it after the owner's OK.",
+              dry_run=True)
+    sub.add_argument("number")
+    sub.add_argument("--shown", default="", metavar="CODE", help="the code the dry run printed for this draft")
 
     sub = add("group", cmd_group, "List the groups, add one, or change the line that says what goes in one.", dry_run=True)
     sub.add_argument("action", choices=["list", "add", "describe"])
