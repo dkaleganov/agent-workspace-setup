@@ -25,9 +25,9 @@ A chat forgets. A folder doesn't. Keep the memory of your work in plain folders 
 ├── _workspace/                  the skill's own records
 ├── 90_Inbox/                    anything not filed yet
 ├── 91_Projects/                 work that finishes
-│   ├── 91.01_Duplex-renovation/
+│   ├── 91.01_Website-relaunch/
 │   └── _Archive/                closed projects, each kept with its number
-│       └── 91.02_Old-fence/
+│       └── 91.02_Old-brochure/
 ├── 92_Areas/                    ongoing work
 │   └── 92.01_Bookkeeping/
 └── 95_Data/                     libraries and archives that agents read
@@ -39,7 +39,7 @@ The names in this picture are made up.
 
 - **The home's number is your choice:** any ten from 10 to 90. Setup looks at the names of the folders around the place you picked and suggests one that fits. 90 is the suggestion when it's free, because it leaves 10 to 80 for your own folders.
 - **Group folders** take numbers inside the home's ten. With a home at 90: 90 Inbox, 91 Projects, 92 Areas, 95 Data. With a home at 10: 10, 11, 12, 15.
-- **The groups are your choice.** Setup asks whether you want ours or your own. Your own are numbered in the order you list them, up to eight besides the Inbox, and each has one line that says what goes there. Agents file new work by those lines, and the map shows them. You can add a group later, or change a line.
+- **The groups fit your work.** Setup asks what you work on. With one thing, you get ours. With several kinds of work, the agent proposes groups in your own words and says which pattern they follow: by status, by line of work, one folder for each client, course or other thing you have several of, or a mix. No field is built in: the names come from you. Ours stay on offer. Groups are numbered in the order listed, up to eight besides the Inbox. Each says what goes there, and can say what doesn't. Agents file new work by those lines, and the map shows them. You can add a group later, or change a line.
 - **Work folders** get the group's number, a dot and a counter: `91.01`, `91.02`. The script gives the next one.
 - **A folder keeps its number for good.** Rename it, archive it, bring it back, move it from Projects to Areas: the number stays. A project that became ongoing work is still `91.03`, now inside `92_Areas`.
 - **A number is never used twice,** including after you delete a folder.
@@ -54,7 +54,7 @@ The names in this picture are made up.
 - **Two computers.** If two computers that haven't synced each add a folder, both can get the same number. The check catches it and shows both folders. You pick which one keeps the number, and the other gets the next one.
 - **After restoring a backup** of the whole home, tell your agent the highest number you remember using. It continues above that.
 
-The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by John Noble. It is a looser scheme of its own and copies nothing from it. This skill is independent and isn't endorsed by Johnny.Decimal.
+The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Johnny Noble. It is a looser scheme of its own and copies nothing from it. This skill is independent and isn't endorsed by Johnny.Decimal, which is a trademark of Coruscade Pty Ltd.
 
 ## Closed work
 
@@ -70,7 +70,7 @@ The numbering is inspired by [Johnny.Decimal](https://johnnydecimal.com/) by Joh
 - No agent files go into document folders. Changing or adding a document there needs your OK for that action.
 - **One master per deliverable.** Drafts live in the work folder as `_v1`, `_v2`. Once you approve one, the hand-off's "Main files" line says where the master lives.
 - **The six standard files are never copied.** An agent updates `HANDOFF.md` in place. A `HANDOFF_v2.md` would leave the next session reading a stale file, so the check flags it.
-- **Names that sort.** A dated file starts with its date, such as `2026-01-31 Site visit notes.md`. A recurring series is one work folder, and older files move into a folder for each year once there are about 30.
+- **Names that sort.** A dated file starts with its date, such as `2026-01-31 Meeting notes.md`. A recurring series is one work folder, and older files move into a folder for each year once there are about 30.
 - **One table, not many folders.** A list of similar things, such as contacts or suppliers, is one table in one file.
 - If a task needs a file that isn't there, the agent stops and says so.
 
@@ -177,11 +177,22 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 ## Your other folders, if you want help
 
 - **It is optional.** Setup asks whether you want only an AI home, or also help with the folders beside it. You can ask later too: "organize my folders".
-- **The agent looks at names only,** two levels down at most, and asks what each folder is for. Private folders and folders that belong to an app are named first and left alone.
-- **You get one numbered list of changes:** create this folder, rename that one, move this into that. You approve by number.
+- **The agent starts from names,** sizes and dates, and asks what each folder is for. Private folders and folders that belong to an app are named first and left alone.
+- **You get one numbered list of changes:** create this folder, rename that one, move these files into that one. You approve by number.
 - **The numbers are simple.** A folder takes two digits and a name. At the top, an inbox takes 00, an archive 99, and the tens between are yours. One level down, numbers stay inside the parent's ten.
-- **No agent file is written there.** The map of your folders, the log of every change and the keep list all live in the AI home.
-- **Nothing is opened and nothing is deleted.** A rename or a move can be undone.
+- **No agent file is written there.** The map of your folders, the log of every change, the plan and the keep list all live in the AI home.
+- **Nothing is deleted and no file is renamed.** A rename of a folder, a move or a batch of files can be undone.
+
+### Sorting a messy folder: your choice
+
+When files need sorting, the agent shows you two ways and you pick.
+
+- **By name, with you.** The agent sees names, sizes and dates and opens nothing. Where a name doesn't say what a file is, it asks you. Best for private papers, or when the names are already clear.
+- **Open and sort.** The agent opens the files in the folders you name and proposes a place for every file. It is cleaner and goes deeper. What it costs: the contents of those files go to your AI tool's service, a file kept only in the cloud is downloaded when it is opened, and it takes longer and uses more of your plan.
+- **Before you pick the second way, check your AI tool's privacy settings.** If it has a setting that lets your chats train its models, turn it off first, unless you are fine with these files being used that way. Either way, the contents are sent to the service to be read.
+- **What stays the same:** nothing moves before you approve it by number, and every move can be undone. Files whose names look like passwords, keys, identity papers or health records stay closed unless you name them. A private folder can't be picked.
+- **The limit you should know:** the skill's script can't stop an agent from opening a file. The rules tell it which files, and your AI tool's own permission prompts are the backstop. A smaller model follows such rules less closely.
+- **If you don't choose,** the agent sorts by name.
 
 ## Review, by number
 
@@ -195,6 +206,6 @@ An honest limit: the skill can't block an agent from reading a file. For anythin
 
 - It deletes nothing. If something should go, it tells you and you delete it.
 - It never overwrites a file. It creates new ones, keeps its own records, and refreshes the tables it owns in the map. After you update the skill and approve it, it adds new rules to the end of the home's `AGENTS.md`.
-- It never writes a file outside the AI home, and it never opens your documents on its own.
-- It never touches a folder outside the AI home, unless you ask it to help organize your folders. Then it creates, renames and moves only the folders you approve by number, logs each change in the AI home, and can undo a rename or a move.
+- It never writes a file outside the AI home. An agent opens a document of yours when your work needs it and you pointed to it, or when you chose "open and sort" for its folder.
+- It never touches a folder outside the AI home, unless you ask it to help organize your folders. Then it creates, renames and moves only the folders and files you approve by number, logs each change in the AI home, and can undo a rename, a move or a batch of files.
 - It never sends, posts, shares or pays.

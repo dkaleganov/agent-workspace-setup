@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0
+
+- **Groups that fit your work.** Setup now asks what you work on. Name several kinds of work, and it proposes groups in your own words and says which pattern they follow: by status, by line of work, one folder for each client, course or other thing you have several of, or a mix. No field is built in. Ours stay one word away. A group can also say what doesn't belong in it.
+- **"Rethink my groups."** The same consult for a workspace that exists. It proposes new groups or new lines, and never renames or removes a group folder.
+- **A messy folder, two ways.** "Organize my folders" now lists loose files by name. When files need sorting, you pick: by name with you, or the agent opens the files in the folders you name. The choice says what the second way costs, and tells you to check your AI tool's setting for model training first.
+- **Files move in batches.** One approved number moves a listed batch of files, and one undo puts it back. A file that would overwrite another is left and listed.
+- **A plan that waits for you.** The plan for your folders is kept, so a long tidy-up can stop and go on in a later session. The check says when one was left half done.
+- **Warnings on names,** with nothing renamed: odd characters, names that differ only by capitals, "final" and "copy", a number with no leading zero.
+- **A check on the size of the rules,** because long rules are followed less closely and one tool stops reading past 32 KB.
+- **Keywords.** A work folder can be found by a word written on a Keywords line in its README.
+- **Five new rules for agents:** one home for work that fits two groups, done means checked, write down what surprised you, help the next search, and open a file outside the workspace only by choice.
+- **What changed in the promises:** the README no longer says that no file is opened. A file of yours is opened in a tidy-up only when you chose "open and sort" for its folder.
+- "Upgrade my workspace" adds the new rules to the end of your `AGENTS.md`, after a preview. Your groups stay as they are.
+
 ## 0.5.0
 
 - **The hand-off is never copied.** The rules now say the six standard files are updated in place, and the check flags a second copy such as `HANDOFF_v2.md`. A cheaper model can read "save a new version as `_v2`" too broadly, and the next session would then read a stale hand-off.
@@ -28,7 +42,7 @@
 
 ## 0.3.0
 
-- **Each group keeps its own archive.** Closed work now moves into `_Archive` inside the group it is in, such as `91_Projects/_Archive/91.02_Old-fence`. It stays beside the work it belonged to, and you can see where it came from. The folder is made the first time something in that group is archived.
+- **Each group keeps its own archive.** Closed work now moves into `_Archive` inside the group it is in, such as `91_Projects/_Archive/91.02_Old-brochure`. It stays beside the work it belonged to, and you can see where it came from. The folder is made the first time something in that group is archived.
 - **No more single archive.** New workspaces don't get a `99_Archive` folder.
 - **Nothing changes in a workspace you already have until you ask.** Its old archive keeps working. The check lists what is in it (ARC001), and "archive 91.02" moves one folder into its own group's archive, after a preview.
 - **Archived work is frozen.** Agents restore a folder before working in it, and the check skips links inside archived folders.

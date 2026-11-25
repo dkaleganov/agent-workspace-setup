@@ -6,7 +6,7 @@ Find any piece of work here. Every agent follows [AGENTS.md](AGENTS.md).
 
 ## Start a session
 
-Open a session in this folder or in a work folder, name the work, and say what you want. For example: "Continue the kitchen remodel."
+Open a session in this folder or in a work folder, name the work, and say what you want. For example: "Continue the website relaunch."
 
 The agent reads the folder's hand-off first and updates it when a task is done. Close the chat whenever you like. The next session starts from the hand-off.
 

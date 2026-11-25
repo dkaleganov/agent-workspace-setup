@@ -17,19 +17,19 @@ To check for Python, open Terminal and type `python3 --version`. On a Mac withou
 
 **1. Install**
 
-1. Download `agent-workspace-setup-0.5.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.6.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **2. Set up your workspace**
 
 1. Start a new Cowork task and connect the folder that should hold your AI home, such as your Documents folder.
 2. Say: "Set up my AI workspace."
-3. Answer the six questions, read the preview, and say OK. Nothing is created before your OK. The first asks whether you want only an AI home, or also help with the folders beside it. The second is about groups: take ours, or name your own with one line each.
+3. Answer the five questions, read the preview, and say OK. Nothing is created before your OK. The first asks whether you want only an AI home, or also help with the folders beside it. The fourth asks what you work on: name several kinds of work, and the preview shows groups in your own words. Say "ours" for Projects, Areas and Data.
 4. Give it the goal and the first task when it asks. Then you can close the chat.
 
 **3. Come back the next day**
 
-Start a new task, connect the same folder, and say: "Continue the kitchen remodel. Do the next action." Use your own project's name.
+Start a new task, connect the same folder, and say: "Continue the website relaunch. Do the next action." Use your own project's name.
 
 Good to know: if Cowork asks to approve a command that runs `workspace.py`, approve it. That is the skill's script.
 
@@ -47,7 +47,7 @@ Good to know: if Cowork asks to approve a command that runs `workspace.py`, appr
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.5.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
+   python "$HOME\Downloads\agent-workspace-setup-0.6.0\agent-workspace-setup\scripts\workspace.py" install --tool claude
    ```
 
 3. Start a new Claude Code session.
@@ -62,7 +62,7 @@ Open a terminal in the folder that should hold your AI home, start `claude`, and
 
 **3. Come back the next day**
 
-Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01_Kitchen-remodel`, start `claude`, and say: "Continue this project."
+Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01_Website-relaunch`, start `claude`, and say: "Continue this project."
 
 ## Codex
 
@@ -78,7 +78,7 @@ Open a terminal in the project's folder, such as `90_AI-Agents/91_Projects/91.01
    On Windows, "Extract All" puts the folder inside one named after the ZIP, so paste this into PowerShell:
 
    ```
-   python "$HOME\Downloads\agent-workspace-setup-0.5.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
+   python "$HOME\Downloads\agent-workspace-setup-0.6.0\agent-workspace-setup\scripts\workspace.py" install --tool codex
    ```
 
 3. Restart Codex.
@@ -115,13 +115,13 @@ Not tested in this version. The skill is built to work like this:
 | You say | What happens |
 |---|---|
 | "Brief me." | One line per piece of work: what is due, what is waiting on you, what is out of date. It ends with what it didn't cover |
-| "Add a project: the garage sale." | A new numbered folder with the six standard files, after a preview |
+| "Add a project: the spring newsletter." | A new numbered folder with the six standard files, after a preview |
 | "Add an area: bookkeeping." | The same, for work that never finishes |
 | "Record that decision." | Your decision goes into `DECISIONS.md`, with the date and the reason |
 | "Update the hand-off." | The agent writes down where things stand and what comes next |
 | "Rename this project to ..." | The folder is renamed and keeps its number |
 | "Archive this project." | It moves into `_Archive` inside its own group and keeps its number |
-| "Restore the fence project." | It comes back out of the archive, into the same group |
+| "Restore the brochure project." | It comes back out of the archive, into the same group |
 | "Undo that." | The last rename, move or archive is reversed |
 | "Check my workspace." | A read-only check, with a fix for each finding |
 | "Set up a daily check." | Optional. You see the exact job first, and nothing is scheduled without your yes |
@@ -129,7 +129,9 @@ Not tested in this version. The skill is built to work like this:
 | "Sort my Inbox." | Each item goes into the work folder you name, unopened. "Undo that" puts it back |
 | "Tidy up my workspace." | An out-of-date hand-off is rewritten from its own log, one project at a time. A copy of the old one is kept, and you see the before and after first |
 | "Add a group: Clients, one folder for each client." | A new group folder with that line. New work can be filed there |
-| "Organize my folders." | Optional. The agent looks at folder names, asks what each is for, and shows a numbered list of changes. Answer with numbers. "Undo that" reverses the last rename or move |
+| "Rethink my groups." | The agent asks what changed in your work and proposes new groups or new lines. Nothing changes before your OK |
+| "Organize my folders." | Optional. The agent looks at folder names and loose files, asks what each is for, and shows a numbered list of changes. Answer with numbers. "Undo that" reverses the last rename, move or batch of files |
+| "Sort this messy folder." | Optional. The agent shows two ways and you pick: by name with you, or it opens the files in the folders you name. Check your AI tool's setting for model training before you pick the second |
 | "Upgrade my workspace." | After you update the skill: what's new, and the new rules for your workspace, after a preview |
 | "What is this file for?" | A plain answer |
 
@@ -139,7 +141,7 @@ The project names here are made up.
 
 - **One piece of work per chat.** Start a new chat for a new project. The files carry the memory.
 - **Start from the hand-off.** Don't reopen an old, long chat to continue. Open a fresh one in the project's folder.
-- **Say your decisions out loud.** "We're going with the second contractor. Record that."
+- **Say your decisions out loud.** "We're going with the second agency. Record that."
 - **Let the skill give out numbers.** Never number a folder by hand.
 - **Keep documents where they are.** Contracts, statements and photos stay in your own folders. Tell the agent where they live, and it reads them from there.
 - **Ask where a number came from.** Agents write a fact down with its source and date. What they couldn't check is marked `Unconfirmed`, and a brief lists those lines.
@@ -157,7 +159,7 @@ Good to know:
 - **It only reads and reports.** It never moves, deletes or edits your files.
 - **The first run may wait for you.** It asks before it runs the one command. Open the run in the Scheduled list, approve it, and choose to always allow it, so later runs don't wait.
 - **The app has to be open and the computer awake** for a scheduled task to run. In Claude Code on the desktop, a missed run is made up once.
-- **Write deadlines so the check can read them:** "Book the installer, due 2026-03-04". The same goes for "Waiting on the bank since 2026-03-04".
+- **Write deadlines so the check can read them:** "Send the draft, due 2026-03-04". The same goes for "Waiting on the bank since 2026-03-04".
 - **To stop it:** say "remove my routines", then delete or pause the task in the tool's Scheduled list.
 
 ## When you update the skill
