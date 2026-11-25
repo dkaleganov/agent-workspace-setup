@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+A fix release. No new command, rule or question, and no workspace needs an upgrade.
+
+- **Every work folder is in plain sight.** The check and the list of groups now name each work folder, so an agent sees them without searching.
+- **A similar name gets a question.** When you add a work folder and one with a similar name exists, the agent is told to ask you whether it is the same work.
+- **A clearer line before a tidy-up.** After the copy of a hand-off is kept, the script now tells the agent to show you the before and after and wait for your OK. A smaller model may still skip that step. The copy is kept either way.
+
 ## 0.6.0
 
 - **Groups that fit your work.** Setup now asks what you work on. Name several kinds of work, and it proposes groups in your own words and says which pattern they follow: by status, by line of work, one folder for each client, course or other thing you have several of, or a mix. No field is built in. Ours stay one word away. A group can also say what doesn't belong in it.

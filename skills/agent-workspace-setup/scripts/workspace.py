@@ -33,7 +33,7 @@ import urllib.parse
 import zipfile
 from pathlib import Path
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 SKILL = "agent-workspace-setup"
 RECORDS = "_workspace"
@@ -312,6 +312,43 @@ def tilde(path):
 
 def bullets(items):
     return "\n".join("- " + item for item in items)
+
+
+NAME_FILLER = {"the", "a", "an", "my", "our", "of", "and", "for", "project", "area", "folder", "work"}
+
+
+def name_words(text):
+    """The words that tell one work folder's name from another: no filler words and no numbers."""
+    return {word for word in re.findall(r"[^\W_]+", str(text).lower()) if word not in NAME_FILLER and not word.isdigit()}
+
+
+def similar_work(items, title):
+    """Work folders named like this title: one name holds every word of the other, or they share two telling words.
+
+    A word that two or more folders here already share, such as the "rental" in a home with one folder for each
+    rental, tells nothing apart and doesn't count towards the two."""
+    wanted = name_words(title)
+    names = [(item, name_words(item["name"])) for item in sorted(items, key=lambda item: item["number"])]
+    seen = {}
+    for _, words in names:
+        for word in words:
+            seen[word] = seen.get(word, 0) + 1
+    common = {word for word, count in seen.items() if count >= 2}
+    found = []
+    for item, have in names:
+        shared = wanted & have
+        if shared and (shared == wanted or shared == have or len(shared - common) >= 2):
+            found.append(item)
+    return found
+
+
+def work_names(items, limit=20):
+    """Work folders as `91.01 Website relaunch`, in number order: the first few, then how many more."""
+    listed = sorted(items, key=lambda item: item["number"])
+    shown = ["%s %s" % (item["number"], (item.get("title") or item["name"]).replace("-", " ")) for item in listed[:limit]]
+    if len(listed) > limit:
+        shown.append("and %d more" % (len(listed) - limit))
+    return ", ".join(shown)
 
 
 def version_tuple(text):
@@ -1172,7 +1209,8 @@ def cmd_init(args):
         out.say("- The owner can pick any ten from 10 to 90, and any name.")
         return out.finish(
             "Tell the owner the suggested number and ask the setup questions in one message. "
-            "Then write the answers file and run setup with --dry-run."
+            "If they name two or more kinds of work, read references/patterns.md and fit the groups to their work "
+            "before you write the answers file. Then write it and run setup with --dry-run."
         )
     out.say("# Likely places for the AI home")
     out.say()
@@ -1700,6 +1738,8 @@ def cmd_new(args):
         return out.finish("Run check to see it, or pick a different title.")
     planned = plan["work"][0]
     group_name = next(group["name"] for group in plan["groups"] if group["no"] == planned["group_no"])
+    alike = similar_work(State(home).numbered(), args.title)
+    alike_line = "; ".join("`%s/`%s" % (item["rel"], " (archived)" if item["archived"] else "") for item in alike[:5])
     if args.dry_run:
         out.say("# New work folder (dry run): nothing was written")
         out.say()
@@ -1707,6 +1747,12 @@ def cmd_new(args):
             group_name, planned["folder"], ", ".join(name for name, _ in work_templates(home)), planned["status"]))
         for location in planned["documents"]:
             out.say("- reads documents at `%s` (left where they are)" % location)
+        if alike:
+            out.say()
+            out.say("**A work folder with a similar name is already here:** %s." % alike_line)
+            return out.finish(
+                "Stop and ask the owner: is this the same work as the folder named above? If it is, create nothing and work "
+                "in that folder (restore it first if it is archived). If it is new work, run the same command without --dry-run.")
         return out.finish("Show this to the owner. When they approve, run the same command without --dry-run.")
     created, map_message = apply_setup(plan, out, args.by)
     out.say("# New work folder: %s" % planned["number"])
@@ -1715,6 +1761,9 @@ def cmd_new(args):
         out.say("- `%s`" % rel)
     out.say()
     out.say(map_message)
+    if alike:
+        out.say()
+        out.say("**A work folder with a similar name was already here:** %s. Tell the owner, in case the two are the same work." % alike_line)
     return out.finish(
         "Open `%s/%s/%s`, ask the owner for the goal and the first task, and write them into it."
         % (group_name, planned["folder"], home.handoff)
@@ -2291,7 +2340,7 @@ def run_check(home):
 
     settings_rel = "%s/%s" % (RECORDS, SETTINGS_FILE)
     have, this = version_tuple(home.skill_version()), version_tuple(__version__)
-    if have < this:
+    if have < this and any(have < version_tuple(step["version"]) <= this for step in UPGRADES):  # a fix release adds nothing
         add("VER001", settings_rel, "This workspace was set up with version %s of the skill. This copy is %s."
             % (home.skill_version(), __version__),
             "Run upgrade --dry-run, tell the owner what's new, and run it for real after their OK.")
@@ -2405,6 +2454,12 @@ def cmd_check(args):
     out.say("# Workspace check · %s" % iso())
     out.say()
     out.say("**Result:** " + summary)
+    live = [row for row in rows if not row["archived"]]
+    if rows:
+        out.say()
+        out.say("**Work folders:** %s%s" % (
+            work_names(live) or "none that is live",
+            "; %d archived" % (len(rows) - len(live)) if len(rows) > len(live) else ""))
     for level, title in (("error", "Errors"), ("warn", "Warnings"), ("info", "Info")):
         group = [finding for finding in findings if finding["severity"] == level]
         if not group:
@@ -4726,9 +4781,10 @@ def layout_apply(args, home, base):
     if stopped:
         return out.finish("Tell the owner what was done and why number %d wasn't. layout undo reverses the last rename, move or batch of files." % stopped[0], 1)
     return out.finish(
-        "Tell the owner what changed, and which files were left where they are. layout undo reverses the last rename, move "
-        "or batch of files. layout plan shows what is left. Then run check: it lists any hand-off or README that still "
-        "names a folder by its old place."
+        "Tell the owner what changed, and which files were left where they are. To see the folders as they are now, "
+        "run layout look: list them no other way. layout undo reverses the last rename, move or batch of files. "
+        "layout plan shows what is left. Then run check: it lists any hand-off or README that still names a folder "
+        "by its old place."
     )
 
 
@@ -5029,8 +5085,9 @@ def cmd_snapshot(args):
     out.say("# Snapshot kept")
     out.say()
     out.say("A copy of `%s` as it is now: `%s`." % (home.rel(source), home.rel(target)))
-    return out.finish("Now make the approved change to the hand-off. To take it back, copy this file over the hand-off "
-                      "with the owner's OK. Tell the owner where the copy is.")
+    return out.finish("Now draft the new hand-off and show the owner the before and after. Write it only after their OK "
+                      "for this folder. Tell the owner where the copy is: to take a change back, copy this file over the "
+                      "hand-off with their OK.")
 
 
 # ----------------------------------------------------------------------------
@@ -5068,15 +5125,21 @@ def cmd_group(args):
         out.say()
         out.say("Read-only. Nothing was written.")
         out.say()
-        out.say("| Number | Folder | What goes there | Its work |")
-        out.say("|---|---|---|---|")
+        out.say("| Number | Folder | What goes there | Its work | Work folders |")
+        out.say("|---|---|---|---|---|")
         for number, path in sorted(state.groups.items()):
             if home.is_private(home.rel(path)):
-                out.say("| %d | `%s/` | Private. | |" % (number, cell(path.name)))
+                out.say("| %d | `%s/` | Private. | | |" % (number, cell(path.name)))
                 continue
             info = home.group_info(number)
             work = "" if number in (inbox, old) else info["work"]
-            out.say("| %d | `%s/` | %s | %s |" % (number, cell(path.name), cell(home.group_cell(number)), work))
+            inside = [item for item in state.numbered() if item["group_now"] == number]
+            live = [item for item in inside if not item["archived"]]
+            folders = work_names(live, 12) or ("" if number == inbox and not inside else "none")
+            if len(inside) > len(live):
+                folders += "; %d archived" % (len(inside) - len(live))
+            out.say("| %d | `%s/` | %s | %s | %s |" % (
+                number, cell(path.name), cell(home.group_cell(number)), work, cell(folders)))
         pattern = home.pattern()
         if pattern:
             out.say()
@@ -5226,6 +5289,10 @@ def cmd_upgrade(args):
         out.say("This workspace is already at version %s." % this)
         return out.finish("Nothing to do.")
     pending = [step for step in UPGRADES if version_tuple(have) < version_tuple(step["version"]) <= version_tuple(this)]
+    if not pending:
+        out.say("This workspace was set up with version %s of the skill, and this copy is %s. Nothing was added between the two: "
+                "no rule and no file." % (have, this))
+        return out.finish("Nothing to do. Nothing was changed.")
     rules_path = home.root / "AGENTS.md"
     if not rules_path.is_file():
         raise Refuse(

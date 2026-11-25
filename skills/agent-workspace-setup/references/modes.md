@@ -38,13 +38,13 @@ For each item in `work`: `kind` is `project` (finishes), `area` (ongoing) or `da
 
 In a home with its own groups, name the group instead: `--group "<name or number>"`. `group list` shows them, each with its line.
 
-The script takes the next number in that group from the ledger, makes the folder with its six standard files (`README.md`, `HANDOFF.md`, `DECISIONS.md`, `AGENT_SYNC.md`, `AGENTS.md`, `CLAUDE.md`), and refreshes the map. A title that already exists in that group is not added twice.
+The script takes the next number in that group from the ledger, makes the folder with its six standard files (`README.md`, `HANDOFF.md`, `DECISIONS.md`, `AGENT_SYNC.md`, `AGENTS.md`, `CLAUDE.md`), and refreshes the map. A title that already exists in that group is not added twice. When a work folder with a similar name exists, the dry run names it: ask the owner whether it is the same work before you create anything.
 
 ## Groups
 
 | Command | What it does |
 |---|---|
-| `group list` | Every group: its number, its folder, the line on what goes there, and whether its work finishes or is ongoing. Read-only |
+| `group list` | Every group: its number, its folder, the line on what goes there, whether its work finishes or is ongoing, and its work folders by number and name. Read-only |
 | `group add --name "<Name>" --about "<what goes there>" [--not-for "<what doesn't>"] [--work finishes\|ongoing]` | Makes a new group folder under the next free number, with its two small agent files, and adds its lines to the map |
 | `group describe <group> [--about "<line>"] [--not-for "<line>"] [--work finishes\|ongoing]` | Changes a group's lines. `--not-for ""` clears that line. The folder and its work stay as they are |
 
@@ -283,7 +283,7 @@ For when hand-offs have drifted. The owner says "tidy up my workspace", or appro
 
 ## Upkeep: after the skill was updated
 
-A workspace remembers which version of the skill set it up. When the copy of the skill is newer, `check` says so (VER001).
+A workspace remembers which version of the skill set it up. When the copy of the skill is newer and has a rule or a file to add, `check` says so (VER001). A fix release, such as 0.6.1, adds nothing and asks for no upgrade.
 
 1. Run `upgrade --dry-run`. It lists what's new, and shows the exact section it would add to the end of the home's `AGENTS.md`: the rules that workspaces set up today already have. From version 0.5.0 it also adds `BRIEF.md` at the top of the home when that file is missing.
 2. Tell the owner what's new in plain words, and show them that text.
@@ -361,7 +361,7 @@ When a folder has no key in its hand-off, the proposal names a key. Add that `**
 1. Create the home folder, `_workspace/`, and the group folders, numbered from the home's ten. Ours: +0 Inbox, +1 Projects, +2 Areas, +5 Data. The owner's own: +0 Inbox, then +1, +2 and so on in the order they listed them, up to +8.
 2. Write `_workspace/settings.json`:
    ```json
-   {"version": 1, "skill_version": "0.6.0", "owner": "<name>", "home_number": 90, "separator": "_",
+   {"version": 1, "skill_version": "0.6.1", "owner": "<name>", "home_number": 90, "separator": "_",
     "handoff_file": "HANDOFF.md", "private": [], "documents": [], "tools": [], "stale_after_days": 30, "suppress": []}
    ```
 3. For each file, copy the matching template from `assets/templates`, replace every `{{PLACEHOLDER}}`, and show it before writing it.

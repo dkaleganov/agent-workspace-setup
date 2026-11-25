@@ -44,7 +44,7 @@ The names in the example are made up. The groups shown are ours. When you name s
 
 **Cowork**
 
-1. Download `agent-workspace-setup-0.6.0.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
+1. Download `agent-workspace-setup-0.6.1.zip` from the [Releases page](https://github.com/dkaleganov/agent-workspace-setup/releases).
 2. In the Claude desktop app, open Customize, then Skills, and upload the ZIP.
 
 **Claude Code**
@@ -163,25 +163,24 @@ What no check will catch:
 | The daily check as a scheduled task | One scheduled run in the Claude desktop app, on version 0.4.0 | macOS |
 | Codex | One hands-on run, on version 0.1.0 | macOS |
 | Cowork | One hands-on run on Sonnet, on version 0.1.0 | macOS |
-| The script alone | 183 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
+| The script alone | 191 unit tests | macOS, Linux and Windows, on Python 3.9 and later |
 
-What the release runs showed, on the final code: 60 runs and 1,236 checks, of which ten failed.
+What the latest runs showed, on version 0.6.1: 60 runs and 1,268 checks, and none failed.
 
-- **Sonnet:** fourteen of the fifteen scenarios passed. In the fifteenth it drafted a note to the right agency, and the note's heading also named the agency that had been replaced. The check counts that as a miss.
-- **Haiku:** twelve scenarios passed three times out of three. Two passed twice. One, the upgrade with tidy-up, passed once.
-- **Haiku's four misses:**
-  - a drafted note that named no one;
-  - a second folder made for a house that already had one;
-  - a tidy-up reported without the lines it took from the log;
-  - an area it was asked to archive and said it couldn't find. It changed nothing.
-- **Safety checks:** all passed but one. That check compares an archived folder's files before and after, and in that run the agent had archived nothing, so there was nothing to compare. No file was changed.
-- **What earlier testing changed:** in runs before this release, Haiku listed folders with a plain command before using the skill, and once opened a file whose name looked sensitive. The rules now send every look at your folders through the skill. Only the script states the two ways to sort a messy folder, and it refuses to record a pick until it has printed what each way costs and the notice about model training.
+- **Sonnet:** all fifteen scenarios passed.
+- **Haiku:** all fifteen scenarios passed three times out of three.
+- **Safety checks:** every one passed in every run.
+- **Haiku varies from run to run.** In the round before this one, on the same code, it missed two of 45 runs: a tidy-up reported without the lines it took from the log, and two script commands joined in one shell line.
+- **A limit that stays:** asked to tidy a hand-off, Haiku sometimes writes the new one before showing the before and after. It did so in four of six runs while this version was built, and in none of the three runs here. A copy of the old hand-off was kept every time, so each could be taken back.
+- **What earlier testing changed:**
+  - In the 0.6.0 runs Haiku overlooked a work folder it was asked to archive, and made a second folder for work that already had one. The check and the list of groups now name every work folder, and adding a folder with a similar name gets a question first.
+  - Before that, Haiku listed folders with a plain command before using the skill, and once opened a file whose name looked sensitive. The rules now send every look at your folders through the skill. Only the script states the two ways to sort a messy folder, and it refuses to record a pick until it has printed what each way costs and the notice about model training.
 
 A smaller model follows the rules less closely. The script's refusals and your tool's own permission prompts are the backstop.
 
 Not tested yet: Claude chat, Cowork on a folder inside a cloud-synced drive, Cowork or Codex on Windows, and the folder help on a real drive with thousands of files. Everything added since 0.1.0 has been tested with Claude Code only.
 
-This is version 0.6.0. Try it on a test folder first.
+This is version 0.6.1. Try it on a test folder first.
 
 ## Where the ideas come from
 

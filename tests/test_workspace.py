@@ -2887,6 +2887,143 @@ class SmallUpkeepTests(Base):
         self.assertEqual(self.check()[1]["summary"]["error"], 0)
 
 
+class FixReleaseTests(Base):
+    """0.6.1: what the script prints, so an agent sees every work folder, a similar name, and when to show a change."""
+
+    def setUp(self):
+        super().setUp()
+        self.build()
+
+    def row(self, output, number):
+        return next(line for line in output.splitlines() if line.startswith("| %d |" % number))
+
+    def test_the_group_list_names_each_groups_work_folders(self):
+        code, output = run("group", "list", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("| Number | Folder | What goes there | Its work | Work folders |", output)
+        self.assertTrue(self.row(output, 91).endswith("| 91.01 Website relaunch |"), output)
+        self.assertTrue(self.row(output, 92).endswith("| 92.01 Bookkeeping |"), output)
+        self.assertTrue(self.row(output, 95).endswith("| none |"), output)
+        self.assertTrue(self.row(output, 90).endswith("|  |"), output)          # the Inbox holds no work folders
+        code, output = run("archive", "92.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        code, output = run("group", "list", "--home", self.home)
+        self.assertTrue(self.row(output, 92).endswith("| none; 1 archived |"), output)
+
+    def test_the_check_lists_the_work_folders_by_name(self):
+        code, output = run("check", "--home", self.home)
+        self.assertIn("**Work folders:** 91.01 Website relaunch, 92.01 Bookkeeping\n", output)
+        run("archive", "92.01", "--home", self.home)
+        code, output = run("check", "--home", self.home)
+        self.assertIn("**Work folders:** 91.01 Website relaunch; 1 archived\n", output)
+        for number in range(22):
+            code, made = run("new", "--title", "Client %s" % "abcdefghijklmnopqrstuv"[number], "--kind", "project", "--home", self.home)
+            self.assertEqual(code, 0, made)
+        code, output = run("check", "--home", self.home)
+        line = next(line for line in output.splitlines() if line.startswith("**Work folders:**"))
+        self.assertIn("91.20 Client s, and 3 more; 1 archived", line)
+        self.assertNotIn("Client t", line)
+
+    def test_a_private_group_names_no_work_folder(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["private"] = list(settings.get("private") or []) + ["92_Areas"]
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        code, output = run("group", "list", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("| 92 | `92_Areas/` | Private. | | |", output)
+        self.assertNotIn("Bookkeeping", output)
+        code, output = run("check", "--home", self.home)
+        self.assertIn("**Work folders:** 91.01 Website relaunch\n", output)   # the private group's folder isn't listed
+
+    def test_the_words_that_make_two_names_alike(self):
+        self.assertEqual(ws.name_words("The Website relaunch, phase 2"), {"website", "relaunch", "phase"})
+        have = [{"number": "91.01", "name": name} for name in
+                ("Pine-St-rental", "Website-relaunch", "Acme-website", "Course-spring-2026", "Bookkeeping")]
+        names = lambda title: [item["name"] for item in ws.similar_work(have, title)]
+        self.assertEqual(names("Pine St house"), ["Pine-St-rental"])                 # two words shared
+        self.assertEqual(names("Website relaunch phase 2"), ["Website-relaunch"])    # every word of the shorter one
+        self.assertEqual(names("Bookkeeping 2027"), ["Bookkeeping"])                 # a number tells nothing apart
+        self.assertEqual(names("Acme branding"), [])                                 # one shared word of two
+        self.assertEqual(names("Course fall 2026"), [])
+        self.assertEqual(names("Spring newsletter"), [])
+        # One folder for each client: the words every folder shares tell nothing apart.
+        have = [{"number": "92.0%d" % (index + 1), "name": "%s-brand-identity" % client}
+                for index, client in enumerate(("Acme", "Birch", "Calla"))]
+        self.assertEqual(names("Delta Foods brand identity"), [])
+        self.assertEqual(names("Acme brand identity refresh"), ["Acme-brand-identity"])
+        have = [{"number": "91.01", "name": "Pine-St-rental"}, {"number": "91.02", "name": "Lake-Rd-rental"}]
+        self.assertEqual(names("Pine St house"), ["Pine-St-rental"])
+        self.assertEqual(names("Hill Rd rental"), [])
+
+    def test_new_says_when_a_folder_with_a_similar_name_is_there(self):
+        before = manifest(self.home)
+        code, output = run("new", "--title", "Website relaunch phase 2", "--kind", "project", "--dry-run", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("**A work folder with a similar name is already here:** `91_Projects/91.01_Website-relaunch/`.", output)
+        self.assertIn("Stop and ask the owner: is this the same work", output)
+        self.assertNotIn("When they approve, run the same command", output)
+        self.assertEqual(manifest(self.home), before)
+        code, output = run("new", "--title", "Spring newsletter", "--kind", "project", "--dry-run", "--home", self.home)
+        self.assertNotIn("similar name", output)
+        self.assertIn("Show this to the owner. When they approve, run the same command without --dry-run.", output)
+        # It is a note: the owner may still want a second folder, and gets it.
+        code, output = run("new", "--title", "Website relaunch phase 2", "--kind", "project", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertTrue((self.home / "91_Projects" / "91.02_Website-relaunch-phase-2").is_dir())
+        self.assertIn("**A work folder with a similar name was already here:** `91_Projects/91.01_Website-relaunch/`.", output)
+        # An archived folder counts, and the note says that it is archived.
+        run("archive", "92.01", "--home", self.home)
+        code, output = run("new", "--title", "Bookkeeping 2027", "--kind", "area", "--dry-run", "--home", self.home)
+        self.assertIn("`92_Areas/_Archive/92.01_Bookkeeping/` (archived)", output)
+
+    def test_a_snapshot_says_to_show_the_change_before_writing_it(self):
+        code, output = run("snapshot", "91.01", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("show the owner the before and after", output)
+        self.assertIn("Write it only after their OK for this folder", output)
+        self.assertNotIn("make the approved change", output)
+
+    def test_two_next_lines_point_at_the_step_a_smaller_model_skipped(self):
+        fresh = self.tmp / "Elsewhere"
+        fresh.mkdir()
+        code, output = run("init", "--path", fresh)
+        self.assertEqual(code, 0, output)
+        self.assertIn("If they name two or more kinds of work, read references/patterns.md", output)
+        (self.drive / "Old stuff").mkdir()
+        changes = self.tmp / "changes.json"
+        changes.write_text(json.dumps({"changes": [{"rename": "Old stuff", "to": "10_Old-stuff"}]}), encoding="utf-8")
+        code, output = run("layout", "plan", "--changes", changes, "--home", self.home)
+        self.assertEqual(code, 0, output)
+        code, output = run("layout", "apply", "--only", "all", "--home", self.home)
+        self.assertEqual(code, 0, output)
+        self.assertIn("run layout look: list them no other way", output)
+
+    def test_a_fix_release_asks_for_no_upgrade(self):
+        settings_path = self.home / "_workspace" / "settings.json"
+        last = ws.UPGRADES[-1]["version"]                                # the newest version that added a rule or a file
+        fix = "%s.9" % last.rsplit(".", 1)[0]                            # a fix release after it
+        saved = ws.__version__
+        ws.__version__ = fix
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            settings["skill_version"] = last
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            self.assertNotIn("VER001", self.rules())
+            before = manifest(self.home)
+            for extra in (["--dry-run"], []):
+                code, output = run("upgrade", "--home", self.home, *extra)
+                self.assertEqual(code, 0, output)
+                self.assertIn("Nothing was added between the two: no rule and no file.", output)
+                self.assertIn("Nothing was changed.", output)
+            self.assertEqual(manifest(self.home), before)
+            settings["skill_version"] = ws.UPGRADES[-2]["version"]      # a workspace one real step behind is still told
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+            self.assertIn("VER001", self.rules())
+        finally:
+            ws.__version__ = saved
+
+
 class PackageTests(unittest.TestCase):
     """The skill's own text: what a host loads and what a person reads."""
 
